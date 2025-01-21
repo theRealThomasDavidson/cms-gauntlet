@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import { Plus, Edit, Trash2, ArrowRight } from 'lucide-react';
+import PropTypes from 'prop-types';
 
-export default function WorkflowList() {
+export default function WorkflowList({ onCreateWorkflow, onEditWorkflow, onViewWorkflow }) {
   const [workflows, setWorkflows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const navigate = useNavigate();
 
   useEffect(() => {
     fetchWorkflows();
@@ -55,8 +54,8 @@ export default function WorkflowList() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Workflows</h1>
         <button
-          onClick={() => navigate('/workflows/new')}
-          className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          onClick={onCreateWorkflow}
+          className="flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold shadow-lg hover:bg-blue-700 transition-all"
         >
           <Plus size={20} />
           New Workflow
@@ -78,22 +77,22 @@ export default function WorkflowList() {
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => navigate(`/workflows/${workflow.id}`)}
-                  className="p-2 text-blue-500 hover:bg-blue-50 rounded"
+                  onClick={() => onViewWorkflow(workflow.id)}
+                  className="p-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
                   title="View workflow"
                 >
                   <ArrowRight size={20} />
                 </button>
                 <button
-                  onClick={() => navigate(`/workflows/${workflow.id}/edit`)}
-                  className="p-2 text-gray-500 hover:bg-gray-50 rounded"
+                  onClick={() => onEditWorkflow(workflow.id)}
+                  className="p-3 text-gray-600 hover:bg-gray-50 rounded-lg transition-all"
                   title="Edit workflow"
                 >
                   <Edit size={20} />
                 </button>
                 <button
                   onClick={() => handleDelete(workflow.id)}
-                  className="p-2 text-red-500 hover:bg-red-50 rounded"
+                  className="p-3 text-red-600 hover:bg-red-50 rounded-lg transition-all"
                   title="Delete workflow"
                 >
                   <Trash2 size={20} />
@@ -105,4 +104,10 @@ export default function WorkflowList() {
       </div>
     </div>
   );
-} 
+}
+
+WorkflowList.propTypes = {
+  onCreateWorkflow: PropTypes.func.isRequired,
+  onEditWorkflow: PropTypes.func.isRequired,
+  onViewWorkflow: PropTypes.func.isRequired
+}; 

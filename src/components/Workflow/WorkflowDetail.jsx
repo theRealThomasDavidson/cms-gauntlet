@@ -1,22 +1,22 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
-import { Plus, Edit, Trash2, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Edit, ArrowLeft } from 'lucide-react';
+import PropTypes from 'prop-types';
 
-export default function WorkflowDetail() {
-  const { id } = useParams();
-  const navigate = useNavigate();
-  const [workflow, setWorkflow] = useState(null);
-  const [stages, setStages] = useState([]);
+export default function WorkflowDetail({ id, onBack, onEdit }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [workflow, setWorkflow] = useState(null);
+  const [stages, setStages] = useState([]);
 
   useEffect(() => {
-    fetchWorkflowAndStages();
+    fetchWorkflow();
   }, [id]);
 
-  async function fetchWorkflowAndStages() {
+  async function fetchWorkflow() {
     try {
+      console.log('Fetching workflow with ID:', id);
+      
       // Fetch workflow details
       const { data: workflowData, error: workflowError } = await supabase
         .from('workflows')
@@ -24,37 +24,35 @@ export default function WorkflowDetail() {
         .eq('id', id)
         .single();
 
-      if (workflowError) throw workflowError;
+      if (workflowError) {
+        console.error('Error fetching workflow:', workflowError);
+        throw workflowError;
+      }
+      console.log('Workflow data:', workflowData);
       setWorkflow(workflowData);
 
-      // Fetch stages using our helper function
+      // Fetch stages
+      console.log('Fetching stages for workflow:', id);
       const { data: stagesData, error: stagesError } = await supabase
-        .rpc('get_workflow_stages', { workflow_uuid: id });
+        .from('workflow_stages')
+        .select('*')
+        .eq('workflow_id', id)
+        .order('created_at');
 
-      if (stagesError) throw stagesError;
-      setStages(stagesData || []);
+      if (stagesError) {
+        console.error('Error fetching stages:', stagesError);
+        throw stagesError;
+      }
+      console.log('Stages data:', stagesData);
+      
+      if (stagesData && Array.isArray(stagesData)) {
+        setStages(stagesData);
+      }
     } catch (err) {
-      setError('Error loading workflow details');
-      console.error('Error:', err);
+      console.error('Error in fetchWorkflow:', err);
+      setError('Error loading workflow');
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleDeleteStage(stageId) {
-    if (!confirm('Are you sure you want to delete this stage?')) return;
-
-    try {
-      const { error } = await supabase
-        .from('workflow_stages')
-        .delete()
-        .eq('id', stageId);
-
-      if (error) throw error;
-      await fetchWorkflowAndStages(); // Refresh stages
-    } catch (err) {
-      setError('Error deleting stage');
-      console.error('Error:', err);
     }
   }
 
@@ -63,85 +61,80 @@ export default function WorkflowDetail() {
   if (!workflow) return <div>Workflow not found</div>;
 
   return (
-    <div className="p-4">
-      <div className="flex justify-between items-center mb-6">
-        <div>
+    <div className="p-4 max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onBack}
+            className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-all"
+            title="Back to workflows"
+          >
+            <ArrowLeft size={20} />
+          </button>
           <h1 className="text-2xl font-bold">{workflow.name}</h1>
-          <p className="text-gray-600">{workflow.description}</p>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => navigate(`/workflows/${id}/edit`)}
-            className="flex items-center gap-2 bg-gray-100 px-4 py-2 rounded hover:bg-gray-200"
-          >
-            <Edit size={20} />
-            Edit Workflow
-          </button>
-          <button
-            onClick={() => navigate(`/workflows/${id}/stages/new`)}
-            className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-          >
-            <Plus size={20} />
-            Add Stage
-          </button>
+        <button
+          onClick={() => onEdit(id)}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all"
+        >
+          <Edit size={16} />
+          Edit Workflow
+        </button>
+      </div>
+
+      {/* Workflow Info */}
+      <div className="mb-8">
+        <p className="text-gray-600">{workflow.description}</p>
+        <div className="mt-2">
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+            workflow.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+          }`}>
+            {workflow.is_active ? 'Active' : 'Inactive'}
+          </span>
         </div>
       </div>
 
+      {/* Stages */}
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Workflow Stages</h2>
-        {stages.length === 0 ? (
-          <p>No stages defined yet. Add your first stage!</p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {stages.map((stage, index) => (
-              <div
-                key={stage.id}
-                className="bg-white p-4 rounded-lg shadow flex items-center gap-4"
-              >
-                <div className="flex-1">
-                  <h3 className="font-semibold">{stage.name}</h3>
-                  <p className="text-gray-600">{stage.description}</p>
-                  <div className="flex gap-2 mt-2 text-sm text-gray-500">
+        <h2 className="text-lg font-semibold">Workflow Stages</h2>
+        <div className="space-y-4">
+          {stages.map((stage, index) => (
+            <div 
+              key={stage.id}
+              className="bg-white p-4 rounded-lg shadow-sm border border-gray-200"
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="font-medium text-lg">{stage.name}</h3>
+                  <p className="text-gray-600 mt-1">{stage.description}</p>
+                  <div className="flex gap-2 mt-2">
                     {stage.is_start && (
-                      <span className="bg-green-100 text-green-800 px-2 py-1 rounded">
+                      <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-sm">
                         Start
                       </span>
                     )}
                     {stage.is_end && (
-                      <span className="bg-red-100 text-red-800 px-2 py-1 rounded">
+                      <span className="bg-red-100 text-red-800 px-2 py-1 rounded text-sm">
                         End
                       </span>
                     )}
                   </div>
                 </div>
-
-                <div className="flex items-center gap-2">
-                  {stage.prev_stage_id && (
-                    <ArrowLeft size={20} className="text-gray-400" />
-                  )}
-                  {stage.next_stage_id && (
-                    <ArrowRight size={20} className="text-gray-400" />
-                  )}
-                  <button
-                    onClick={() => navigate(`/workflows/${id}/stages/${stage.id}/edit`)}
-                    className="p-2 text-gray-500 hover:bg-gray-50 rounded"
-                    title="Edit stage"
-                  >
-                    <Edit size={20} />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteStage(stage.id)}
-                    className="p-2 text-red-500 hover:bg-red-50 rounded"
-                    title="Delete stage"
-                  >
-                    <Trash2 size={20} />
-                  </button>
+                <div className="text-sm text-gray-500">
+                  Stage {index + 1} of {stages.length}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
-} 
+}
+
+WorkflowDetail.propTypes = {
+  id: PropTypes.string.isRequired,
+  onBack: PropTypes.func.isRequired,
+  onEdit: PropTypes.func.isRequired
+}; 
