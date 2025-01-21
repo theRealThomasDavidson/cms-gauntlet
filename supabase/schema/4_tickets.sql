@@ -40,8 +40,8 @@ create type ticket_priority as enum ('low', 'medium', 'high', 'urgent');
 create table tickets (
   id uuid primary key default uuid_generate_v4(),
   org_id uuid references organizations(id) not null,
-  workflow_id uuid references workflows(id) not null,
-  current_stage_id uuid references workflow_stages(id) not null,
+  workflow_id uuid references workflows(id),
+  current_stage_id uuid references workflow_stages(id),
   latest_history_id uuid,
   created_by uuid references profiles(id) not null,
   created_at timestamptz default now(),
@@ -55,7 +55,7 @@ create table ticket_history (
   description text,
   priority ticket_priority not null default 'low',
   assigned_to uuid references profiles(id),
-  workflow_stage_id uuid references workflow_stages(id) not null,
+  workflow_stage_id uuid references workflow_stages(id),
   changed_by uuid references profiles(id) not null,
   changed_at timestamptz default now(),
   previous_history_id uuid references ticket_history(id),
@@ -166,27 +166,29 @@ create policy "users_assigned_tickets"
   using (
     exists (
       select 1 from profiles p
-      join ticket_history h on h.assigned_to = p.id
       where p.auth_id = auth.uid()
-      and h.ticket_id = tickets.id
-      and h.id = tickets.latest_history_id
-    )
-    or
-    created_by = (
-      select id from profiles
-      where auth_id = auth.uid()
+      and (
+        -- User created the ticket
+        tickets.created_by = p.id
+        or
+        -- User is assigned to the ticket (check latest history directly)
+        exists (
+          select 1 from ticket_history h
+          where h.ticket_id = tickets.id
+          and h.assigned_to = p.id
+          order by h.changed_at desc
+          limit 1
+        )
+      )
     )
   );
 
 create policy "agent_full_history"
   on ticket_history for select
-  to authenticated
   using (
     exists (
       select 1 from profiles p
-      join tickets t on t.org_id = p.org_id
       where p.auth_id = auth.uid()
-      and t.id = ticket_history.ticket_id
       and p.role in ('admin', 'agent')
     )
   );
@@ -196,19 +198,9 @@ create policy "user_limited_history"
   to authenticated
   using (
     exists (
-      select 1 from tickets t
-      join profiles p on p.org_id = t.org_id
-      where t.id = ticket_history.ticket_id
-      and p.auth_id = auth.uid()
-      and p.role = 'customer'
-      and (
-        t.created_by = p.id
-        or exists (
-          select 1 from ticket_history h
-          where h.ticket_id = t.id
-          and h.assigned_to = p.id
-        )
-      )
+      select 1 from profiles p
+      where p.auth_id = auth.uid()
+      and ticket_history.assigned_to = p.id
     )
   );
 
@@ -322,23 +314,66 @@ create policy "manage_attachments"
     )
   );
 
+create policy "create_ticket_history"
+  on ticket_history for insert
+  to authenticated
+  with check (
+    exists (
+      select 1 from profiles p
+      where p.auth_id = auth.uid()
+      and (
+        p.role in ('admin', 'agent')
+        or p.id = changed_by
+      )
+    )
+  );
+
+create policy "create_tickets"
+  on tickets for insert
+  to authenticated
+  with check (
+    created_by = (
+      select id from profiles
+      where auth_id = auth.uid()
+      limit 1
+    )
+  );
+
 -- Step 7: Create views and functions
+create view ticket_details as
+select 
+  h.id as history_id,
+  h.ticket_id,
+  h.title,
+  h.description,
+  h.priority,
+  h.assigned_to,
+  h.workflow_stage_id,
+  h.changed_by,
+  h.changed_at,
+  ws.name as stage_name,
+  p_assigned.name as assigned_to_name,
+  p_assigned.role as assigned_to_role
+from ticket_history h
+join workflow_stages ws on ws.id = h.workflow_stage_id
+left join profiles p_assigned on p_assigned.id = h.assigned_to;
+
 create materialized view agent_tickets as
 select 
   t.id,
   t.org_id,
   t.workflow_id,
   t.current_stage_id,
-  h.title,
-  h.description,
-  h.priority,
-  h.assigned_to,
+  td.title,
+  td.description,
+  td.priority,
+  td.assigned_to,
   t.created_by,
   t.created_at,
   t.updated_at,
   w.name as workflow_name,
-  ws.name as stage_name,
-  p_assigned.name as assigned_to_name,
+  td.stage_name,
+  td.assigned_to_name,
   p_created.name as created_by_name,
   (
     select count(*) 
@@ -351,10 +386,8 @@ select
     where ta.ticket_id = t.id
   ) as attachment_count
 from tickets t
-join ticket_history h on h.id = t.latest_history_id
-join workflows w on w.id = t.workflow_id
-join workflow_stages ws on ws.id = t.current_stage_id
-left join profiles p_assigned on p_assigned.id = h.assigned_to
+join ticket_details td on td.history_id = t.latest_history_id
+LEFT JOIN workflows w on w.id = t.workflow_id
 join profiles p_created on p_created.id = t.created_by;
 
 create index agent_tickets_org_workflow_idx on agent_tickets(org_id, workflow_id);
@@ -364,12 +397,12 @@ create index agent_tickets_assigned_to_idx on agent_tickets(assigned_to);
 create view customer_tickets as
 select 
   t.id,
-  h.title,
-  h.priority,
-  ws.name as stage_name,
+  td.title,
+  td.priority,
+  td.stage_name,
   case 
-    when p_assigned.role in ('admin', 'agent') then 'Support Team'
-    else p_assigned.name
+    when td.assigned_to_role in ('admin', 'agent') then 'Support Team'
+    else td.assigned_to_name
   end as assigned_to_display,
   t.created_at,
   t.updated_at,
@@ -380,15 +413,13 @@ select
     and not tc.is_internal
   ) as public_comment_count
 from tickets t
-join ticket_history h on h.id = t.latest_history_id
-join workflow_stages ws on ws.id = t.current_stage_id
-left join profiles p_assigned on p_assigned.id = h.assigned_to
+join ticket_details td on td.history_id = t.latest_history_id
 where exists (
   select 1 from profiles p
   where p.auth_id = auth.uid()
   and (
     t.created_by = p.id
-    or h.assigned_to = p.id
+    or td.assigned_to = p.id
   )
 );
 

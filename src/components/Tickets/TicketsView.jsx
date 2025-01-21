@@ -1,38 +1,37 @@
 import { useState, useEffect } from 'react';
-import { Plus, ArrowRight } from 'lucide-react';
-import { supabase } from '../../lib/supabaseClient';
+import { Plus, ArrowRight, Workflow } from 'lucide-react';
+import { fetchTicketsDirect, createTicket } from '../../lib/ticketService';
+import AssignWorkflowModal from './AssignWorkflowModal';
 
 export default function TicketsView() {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [totalPages, setTotalPages] = useState(0);
+
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [showWorkflowModal, setShowWorkflowModal] = useState(false);
 
   useEffect(() => {
-    fetchTickets();
-  }, []);
+    loadTickets();
+  }, [page]);
 
-  async function fetchTickets() {
+  async function loadTickets() {
     try {
-      const { data: ticketsData, error: ticketsError } = await supabase
-        .from('tickets')
-        .select(`
-          id,
-          latest_history_id,
-          created_at,
-          created_by,
-          ticket_history!inner (
-            title,
-            description,
-            status,
-            priority,
-            assigned_to
-          )
-        `)
-        .order('created_at', { ascending: false });
+      setLoading(true);
+      const { data, error, pagination } = await fetchTicketsDirect({
+        page,
+        pageSize
+      });
 
-      if (ticketsError) throw ticketsError;
-      setTickets(ticketsData || []);
+      if (error) throw error;
+      setTickets(data || []);
+      setTotalPages(pagination.totalPages);
     } catch (err) {
       console.error('Error fetching tickets:', err);
       setError('Failed to load tickets');
@@ -62,7 +61,7 @@ export default function TicketsView() {
           onClose={() => setShowCreateForm(false)}
           onCreated={() => {
             setShowCreateForm(false);
-            fetchTickets();
+            loadTickets();
           }}
         />
       )}
@@ -74,35 +73,56 @@ export default function TicketsView() {
           tickets.map(ticket => (
             <div
               key={ticket.id}
-              className="bg-white p-4 rounded-lg shadow flex justify-between items-center"
+              className="bg-white p-4 rounded-lg shadow flex justify-between items-center hover:bg-gray-50 transition-all"
             >
-              <div>
-                <h2 className="text-xl font-semibold">{ticket.ticket_history.title}</h2>
-                <p className="text-gray-600">{ticket.ticket_history.description}</p>
-                <div className="flex gap-2 mt-2">
-                  <span className={`px-2 py-1 rounded text-sm ${
-                    getStatusColor(ticket.ticket_history.status)
-                  }`}>
-                    {ticket.ticket_history.status}
-                  </span>
-                  <span className={`px-2 py-1 rounded text-sm ${
-                    getPriorityColor(ticket.ticket_history.priority)
-                  }`}>
-                    {ticket.ticket_history.priority}
-                  </span>
+              <div className="flex-grow">
+                <h2 className="text-lg font-semibold">{ticket.title}</h2>
+                <div className="flex gap-4 text-sm text-gray-600 mt-1">
+                  <span>{ticket.stage_name || 'No Workflow'}</span>
+                  <span>•</span>
+                  <span>{ticket.assigned_to_name || 'Unassigned'}</span>
                 </div>
               </div>
-              <button
-                onClick={() => {/* TODO: View ticket details */}}
-                className="p-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                title="View ticket details"
-              >
-                <ArrowRight size={20} />
-              </button>
+              <div className="flex gap-2">
+                {!ticket.workflow_id && (
+                  <button
+                    onClick={() => {
+                      setSelectedTicket(ticket);
+                      setShowWorkflowModal(true);
+                    }}
+                    className="p-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                    title="Assign workflow"
+                  >
+                    <Workflow size={20} />
+                  </button>
+                )}
+                <button
+                  onClick={() => {/* TODO: Navigate to TicketDetails */}}
+                  className="p-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                  title="View ticket details"
+                >
+                  <ArrowRight size={20} />
+                </button>
+              </div>
             </div>
           ))
         )}
       </div>
+
+      {showWorkflowModal && selectedTicket && (
+        <AssignWorkflowModal
+          ticket={selectedTicket}
+          onClose={() => {
+            setShowWorkflowModal(false);
+            setSelectedTicket(null);
+          }}
+          onAssigned={() => {
+            setShowWorkflowModal(false);
+            setSelectedTicket(null);
+            loadTickets();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -122,76 +142,13 @@ function CreateTicketForm({ onClose, onCreated }) {
     setError(null);
 
     try {
-      // Get current user's profile
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No active session');
-
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('id, org_id')
-        .eq('auth_id', session.user.id)
-        .single();
+      const result = await createTicket(formData);
+      if (result.error) throw result.error;
       
-      if (profileError) throw profileError;
-
-      // Get the earliest active workflow for the org
-      const { data: workflow, error: workflowError } = await supabase
-        .from('workflows')
-        .select('id')
-        .eq('org_id', profile.org_id)
-        .eq('is_active', true)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .single();
-
-      if (workflowError) throw workflowError;
-
-      // Get the start stage of the workflow
-      const { data: startStage, error: stageError } = await supabase
-        .from('workflow_stages')
-        .select('id')
-        .eq('workflow_id', workflow.id)
-        .eq('is_start', true)
-        .single();
-
-      if (stageError) throw stageError;
-
-      // Create the ticket
-      const { data: ticket, error: ticketError } = await supabase
-        .from('tickets')
-        .insert([{
-          created_by: profile.id
-        }])
-        .select()
-        .single();
-
-      if (ticketError) throw ticketError;
-
-      // Create initial ticket history
-      const { error: historyError } = await supabase
-        .from('ticket_history')
-        .insert([{
-          ticket_id: ticket.id,
-          title: formData.title,
-          description: formData.description,
-          status: 'new',
-          priority: formData.priority,
-          changed_by: profile.id,
-          changes: {
-            title: { old: null, new: formData.title },
-            description: { old: null, new: formData.description },
-            status: { old: null, new: 'new' },
-            priority: { old: null, new: formData.priority }
-          },
-          workflow_stage_id: startStage.id
-        }]);
-
-      if (historyError) throw historyError;
-
       onCreated();
     } catch (err) {
       console.error('Error creating ticket:', err);
-      setError(err.message);
+      setError(err.message || 'Failed to create ticket');
     } finally {
       setLoading(false);
     }

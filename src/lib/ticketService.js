@@ -13,13 +13,13 @@ export async function fetchTickets({
   sortDirection = 'desc'
 } = {}) {
   const { data: profile } = await supabase.auth.getUser()
-  if (!profile) return { data: null, error: 'Not authenticated' }
+  if (!profile?.user) return { data: null, error: 'Not authenticated' }
 
   // Use the appropriate view based on user role
   const { data: userProfile } = await supabase
     .from('profiles')
     .select('role')
-    .eq('auth_id', profile.id)
+    .eq('auth_id', profile.user.id)
     .single()
 
   let query = null
@@ -41,7 +41,9 @@ export async function fetchTickets({
   if (stageId) {
     query = query.eq('current_stage_id', stageId)
   }
-  if (workflowId) {
+  if (workflowId === null) {
+    query = query.is('workflow_id', null)
+  } else if (workflowId) {
     query = query.eq('workflow_id', workflowId)
   }
   if (assignedTo) {
@@ -60,6 +62,43 @@ export async function fetchTickets({
   query = query.range(start, end)
 
   const { data, error, count } = await query
+
+  return { 
+    data, 
+    error,
+    pagination: {
+      page,
+      pageSize,
+      total: count,
+      totalPages: Math.ceil(count / pageSize)
+    }
+  }
+}
+
+// Direct fetch tickets without using views
+export async function fetchTicketsDirect({ 
+  page = 1, 
+  pageSize = 20
+} = {}) {
+  const { data: profile } = await supabase.auth.getUser()
+  if (!profile?.user) return { data: null, error: 'Not authenticated' }
+
+  // Calculate pagination
+  const start = (page - 1) * pageSize
+  const end = start + pageSize - 1
+
+  const { data, error, count } = await supabase
+    .from('tickets')
+    .select(`
+      *,
+      ticket_history!fk_latest_history (
+        title,
+        description,
+        priority
+      )
+    `, { count: 'exact' })
+    .order('updated_at', { ascending: false })
+    .range(start, end)
 
   return { 
     data, 
@@ -137,17 +176,29 @@ export async function fetchTicketDetails(ticketId) {
 
 // Create a new ticket
 export async function createTicket({ title, description, priority, workflowId }) {
-  const { data: profile } = await supabase.auth.getUser()
-  if (!profile) return { error: 'Not authenticated' }
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // Get the user's profile ID
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, org_id')
+    .eq('auth_id', user.id)
+    .single()
+
+  if (profileError) return { error: profileError }
+
+  // Get first stage only if workflow is specified
+  const currentStageId = workflowId ? await getFirstStage(workflowId) : null
 
   // Start a transaction
   const { data: ticket, error: ticketError } = await supabase
     .from('tickets')
     .insert({
       workflow_id: workflowId,
+      org_id: profile.org_id,
       created_by: profile.id,
-      // Get the first stage of the workflow
-      current_stage_id: await getFirstStage(workflowId)
+      current_stage_id: currentStageId
     })
     .select()
     .single()
@@ -341,4 +392,27 @@ export async function deleteAttachment(attachmentId) {
     .from('ticket_attachments')
     .delete()
     .eq('id', attachmentId)
+}
+
+// Get active workflows for the current user's organization
+export async function getActiveWorkflows() {
+  const { data: profile } = await supabase.auth.getUser();
+  if (!profile) return { data: null, error: 'Not authenticated' };
+
+  const { data: userProfile } = await supabase
+    .from('profiles')
+    .select('org_id')
+    .eq('auth_id', profile.user.id)
+    .single();
+
+  if (!userProfile) return { data: null, error: 'User profile not found' };
+
+  const { data, error } = await supabase
+    .from('workflows')
+    .select('id, name')
+    .eq('org_id', userProfile.org_id)
+    .eq('is_active', true)
+    .order('created_at', { ascending: true });
+
+  return { data, error };
 } 
