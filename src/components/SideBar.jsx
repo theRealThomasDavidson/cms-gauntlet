@@ -2,8 +2,9 @@ import { Button } from './ui/button'
 import { Workflow, Ticket, BookOpen, UserCircle } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import PropTypes from 'prop-types'
 
-export default function SideBar({ setActiveComponent }) {
+export default function SideBar({ setActiveComponent, onWorkflowAction }) {
   const [userRole, setUserRole] = useState(null)
 
   useEffect(() => {
@@ -46,7 +47,7 @@ export default function SideBar({ setActiveComponent }) {
         {(userRole === 'admin' || userRole === 'agent') && (
           <>
             <Button 
-              onClick={() => setActiveComponent('workflows')}
+              onClick={() => onWorkflowAction('list')}
               className="w-full justify-start"
             >
               <Workflow className="h-4 w-4 mr-2" />
@@ -87,4 +88,9 @@ export default function SideBar({ setActiveComponent }) {
       </nav>
     </div>
   )
+}
+
+SideBar.propTypes = {
+  setActiveComponent: PropTypes.func.isRequired,
+  onWorkflowAction: PropTypes.func.isRequired
 } 
