@@ -32,7 +32,9 @@ create table workflow_stages (
   is_other boolean default false,
   created_at timestamptz default now(),
   -- Prevent circular references
-  constraint no_self_reference check (id != next_stage_id and id != prev_stage_id)
+  constraint no_self_reference check (id != next_stage_id and id != prev_stage_id),
+  -- Add unique constraint for composite foreign key
+  unique (workflow_id, id)
 );
 
 -- Create workflow stage hooks table

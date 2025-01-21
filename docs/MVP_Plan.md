@@ -14,12 +14,19 @@
   - [x] Hooks button placeholder
   - [x] Visual pink box styling
   - [x] Add stage form with validation
+- [x] Ticket System Foundation:
+  - [x] Database schema for tickets, history, comments, attachments
+  - [x] Service layer API functions
+  - [x] Pagination and filtering support
+  - [x] File attachment handling
+  - [x] Comment system with internal/external separation
 
 ### In Progress
 - [x] Database Structure:
   - [x] Workflows table created
   - [x] Workflow stages table created
-    - [x] confirm this in database
+  - [x] Tickets and related tables created
+  - [ ] Database views implementation
   - [ ] RLS policies missing
   - [ ] Role system not configured
 
@@ -177,3 +184,22 @@
 2. ~~Do we need team management in MVP?~~ No, will add after basic ticket system
 3. ~~What level of notification system for Day 1?~~ None for MVP, will add in Week 1
 4. ~~Should we include any admin features in MVP?~~ Only basic role-based access 
+
+## Next Tasks
+1. Database Views
+   - [ ] Create agent_tickets materialized view
+   - [ ] Create customer_tickets view
+   - [ ] Set up refresh mechanism
+   - [ ] Add necessary indexes
+
+2. RLS Policies
+   - [ ] Set up policies for tickets table
+   - [ ] Set up policies for ticket_history
+   - [ ] Set up policies for comments
+   - [ ] Set up policies for attachments
+
+3. UI Implementation
+   - [ ] Ticket list view with filters
+   - [ ] Ticket detail view
+   - [ ] Comment interface
+   - [ ] File upload interface 

@@ -137,47 +137,109 @@ interface AuthSubscription {
     }
   }
 }
+
+type HookType = 'email' | 'notification' | 'webhook' | 'assignment'
+
+interface Workflow {
+  id: string
+  name: string
+  description: string
+  isActive: boolean
+  createdAt: Date
+  updatedAt: Date
+  createdBy: string
+}
+
+interface WorkflowStage {
+  id: string
+  workflowId: string
+  name: string
+  description: string
+  isStart: boolean
+  isEnd: boolean
+  nextStageId: string | null
+  prevStageId: string | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+interface WorkflowStageHook {
+  id: string
+  stageId: string
+  type: HookType
+  config: Record<string, any>
+  createdAt: Date
+  updatedAt: Date
+}
 ```
 
 ## TicketService
 ```typescript
 interface TicketService {
   // Core Operations
-  createTicket(data: { 
-    title: string
-    description: string
-    priority: TicketPriority
-    customFields?: Record<string, any>
-  }): Promise<Ticket>
-  
-  updateTicket(ticketId: string, updates: Partial<Ticket>): Promise<Ticket>
-  deleteTicket(ticketId: string): Promise<boolean>
-  
-  // Queries
-  getTicket(ticketId: string): Promise<Ticket>
-  listTickets(filters: {
-    status?: TicketStatus
-    priority?: TicketPriority
-    assignedTo?: string
-    tags?: string[]
-  }): Promise<Ticket[]>
-  searchTickets(query: string): Promise<Ticket[]>
+  createTicket(data: {
+    title: string;
+    description: string;
+    priority: TicketPriority;
+    workflowId?: string; // Optional, will use org's default if not provided
+  }): Promise<Ticket>;
+
+  updateTicket(ticketId: string, data: {
+    title?: string;
+    description?: string;
+    priority?: TicketPriority;
+  }): Promise<Ticket>;
+
+  // Stage Management
+  moveToStage(ticketId: string, stageId: string): Promise<Ticket>;
   
   // Assignment
-  assignTicket(ticketId: string, agentId: string): Promise<Ticket>
-  unassignTicket(ticketId: string): Promise<Ticket>
-  
-  // Status Management
-  updateStatus(ticketId: string, status: TicketStatus): Promise<Ticket>
+  assignTicket(ticketId: string, userId: string): Promise<Ticket>;
+  unassignTicket(ticketId: string): Promise<Ticket>;
+
+  // Comments
   addComment(ticketId: string, data: {
-    content: string
-    isInternal: boolean
-    userId: string
-  }): Promise<Comment>
+    content: string;
+    isInternal?: boolean;
+  }): Promise<Comment>;
+
+  // Attachments
+  addAttachment(ticketId: string, file: File): Promise<Attachment>;
+  removeAttachment(attachmentId: string): Promise<void>;
+
+  // Queries
+  getTicket(ticketId: string): Promise<TicketDetails>;
+  listTickets(filters?: {
+    workflowId?: string;
+    stageId?: string;
+    assignedTo?: string;
+    priority?: TicketPriority;
+    createdBy?: string;
+  }): Promise<Ticket[]>;
   
-  // Future AI Integration Points
-  getAISuggestion(ticketId: string): Promise<Suggestion> // Week 2
-  autoRespond(ticketId: string): Promise<Response> // Week 2
+  getTicketHistory(ticketId: string): Promise<TicketHistory[]>;
+  getTicketComments(ticketId: string): Promise<Comment[]>;
+  getTicketAttachments(ticketId: string): Promise<Attachment[]>;
+}
+
+interface TicketDetails extends Ticket {
+  history: TicketHistory[];
+  comments: Comment[];
+  attachments: Attachment[];
+  workflow: {
+    id: string;
+    name: string;
+    currentStage: {
+      id: string;
+      name: string;
+      description: string;
+    };
+    availableStages: {
+      id: string;
+      name: string;
+      description: string;
+    }[];
+  };
 }
 ```
 
@@ -293,4 +355,51 @@ interface UseAuth {
   isAuthenticated: boolean
   isLoading: boolean
   hasRole: (role: UserRole) => boolean
+}
+
+## WorkflowService
+```typescript
+interface WorkflowService {
+  // Core Operations
+  createWorkflow(data: {
+    name: string
+    description?: string
+    isActive?: boolean
+  }): Promise<Workflow>
+  
+  updateWorkflow(workflowId: string, updates: Partial<Workflow>): Promise<Workflow>
+  deleteWorkflow(workflowId: string): Promise<boolean>
+  
+  // Stage Management
+  addStage(workflowId: string, data: {
+    name: string
+    description?: string
+    isStart?: boolean
+    isEnd?: boolean
+  }): Promise<WorkflowStage>
+  
+  updateStage(stageId: string, updates: Partial<WorkflowStage>): Promise<WorkflowStage>
+  deleteStage(stageId: string): Promise<boolean>
+  
+  // Stage Order Management
+  setNextStage(stageId: string, nextStageId: string | null): Promise<WorkflowStage>
+  setPrevStage(stageId: string, prevStageId: string | null): Promise<WorkflowStage>
+  
+  // Hook Management
+  addHook(stageId: string, data: {
+    type: HookType
+    config: Record<string, any>
+  }): Promise<WorkflowStageHook>
+  
+  updateHook(hookId: string, updates: Partial<WorkflowStageHook>): Promise<WorkflowStageHook>
+  deleteHook(hookId: string): Promise<boolean>
+  
+  // Queries
+  getWorkflow(workflowId: string): Promise<Workflow>
+  listWorkflows(filters?: {
+    isActive?: boolean
+  }): Promise<Workflow[]>
+  
+  getWorkflowStages(workflowId: string): Promise<WorkflowStage[]>
+  getStageHooks(stageId: string): Promise<WorkflowStageHook[]>
 } 
