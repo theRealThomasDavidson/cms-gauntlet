@@ -15,4 +15,10 @@ export default defineConfig({
       "./runtimeConfig": "./runtimeConfig.browser",
     },
   },
+  server: {
+    port: 5173,
+    strictPort: true,
+    host: true,
+    open: true
+  }
 })
