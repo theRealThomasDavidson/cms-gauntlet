@@ -144,6 +144,12 @@
 4. Implement stage transition rules
 5. Create default workflow template
 6. Create ticket management UI using workflow system
+7. Production Configuration
+   - [ ] Update Supabase Site URL for production
+   - [ ] Configure Supabase redirect URLs
+   - [ ] Verify GitHub OAuth settings
+   - [ ] Test authentication flow in production
+   - [ ] Document environment variables
 
 ## Week 1 Full Features
 ### Workflow System
