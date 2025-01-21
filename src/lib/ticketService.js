@@ -91,7 +91,7 @@ export async function fetchTicketsDirect({
     .from('tickets')
     .select(`
       *,
-      ticket_history!fk_latest_history (
+      latest_history:ticket_history!fk_latest_history (
         title,
         description,
         priority
@@ -100,8 +100,16 @@ export async function fetchTicketsDirect({
     .order('updated_at', { ascending: false })
     .range(start, end)
 
+  // Transform the data to flatten the structure
+  const transformedData = data?.map(ticket => ({
+    ...ticket,
+    title: ticket.latest_history?.title,
+    description: ticket.latest_history?.description,
+    priority: ticket.latest_history?.priority
+  })) || [];
+
   return { 
-    data, 
+    data: transformedData, 
     error,
     pagination: {
       page,

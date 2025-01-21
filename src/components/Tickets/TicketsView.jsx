@@ -30,6 +30,7 @@ export default function TicketsView() {
       });
 
       if (error) throw error;
+      console.log('Ticket data:', data);
       setTickets(data || []);
       setTotalPages(pagination.totalPages);
     } catch (err) {
@@ -76,8 +77,8 @@ export default function TicketsView() {
               className="bg-white p-4 rounded-lg shadow flex justify-between items-center hover:bg-gray-50 transition-all"
             >
               <div className="flex-grow">
-                <h2 className="text-lg font-semibold">{ticket.title}</h2>
                 <div className="flex gap-4 text-sm text-gray-600 mt-1">
+                  <span>{ticket.title}</span>
                   <span>{ticket.stage_name || 'No Workflow'}</span>
                   <span>•</span>
                   <span>{ticket.assigned_to_name || 'Unassigned'}</span>
