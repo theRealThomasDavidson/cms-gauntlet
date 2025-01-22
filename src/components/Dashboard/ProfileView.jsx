@@ -57,20 +57,26 @@ export default function ProfileView() {
 
       // If no profile exists, create one with default values
       if (profileError && (profileError.message.includes('returned no rows') || profileError.code === 'PGRST116')) {
+        // Get default org id
+        const { data: defaultOrg } = await supabase
+          .from('organizations')
+          .select('id')
+          .eq('is_default', true)
+          .single()
+
         const { data: newProfile, error: createError } = await supabase
           .from('profiles')
-          .insert([
-            {
-              auth_id: user.id,
-              email: user.email,
-              username: user.email,  // Default to email
-              name: user.email,      // Default to email
-              preferences: {
-                notifications: true,
-                theme: 'light'
-              }
+          .insert([{
+            auth_id: user.id,
+            email: user.email,
+            username: user.email,  // Default to email
+            name: user.email,      // Default to email
+            org_id: defaultOrg.id,
+            preferences: {
+              notifications: true,
+              theme: 'light'
             }
-          ])
+          }])
           .select()
           .single()
 

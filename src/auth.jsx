@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from './supabaseClient'
+import { supabase } from './lib/supabaseClient'
 import { Button } from "./components/ui/button"
 import { Input } from "./components/ui/input"
 import { Label } from "./components/ui/label"
@@ -52,7 +52,7 @@ export default function AuthComponent() {
           setError(signInError.message)
         }
       }
-    } catch (error) {
+    } catch (err) {
       setError('An error occurred. Please try again later.')
     } finally {
       setLoading(false)

@@ -1,7 +1,14 @@
-import { createClient } from '@supabase/supabase-js'
+/**
+ * ⚠️ DEPRECATED ⚠️
+ * 
+ * This file is deprecated and will be removed.
+ * Please use '@/lib/supabaseClient' instead:
+ * 
+ * import { supabase } from '@/lib/supabaseClient'
+ * 
+ * This ensures consistency across the codebase and prevents duplicate client instances.
+ */
 
-// These values will come from your .env file
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-
-export const supabase = createClient(supabaseUrl, supabaseKey)
+throw new Error(
+  'This Supabase client is deprecated. Please import from "@/lib/supabaseClient" instead.'
+) 

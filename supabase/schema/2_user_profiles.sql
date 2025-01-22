@@ -72,13 +72,6 @@ create policy "admins can delete profiles"
   on profiles for delete
   using (is_admin() = true);
 
--- Agents can view all profiles
-create policy "agents can view all profiles"
-  on profiles for select
-  using (
-    (select role from profiles where auth_id = auth.uid()) = 'agent'
-  );
-
 -- Function to create profile on signup
 create or replace function handle_new_user()
 returns trigger as $$
@@ -166,11 +159,8 @@ begin
     delete from public.profiles
     where auth_id = v_user_id;
 
-    -- Delete auth user
-    if v_is_admin then
-      -- Admins can delete the auth user directly
-      perform auth.users.delete(v_user_id);
-    end if;
+    -- Always delete the auth user
+    perform auth.users.delete(v_user_id);
 
     return jsonb_build_object(
       'success', true,

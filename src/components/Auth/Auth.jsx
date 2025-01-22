@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../../lib/supabaseClient'
+import { auth } from '../../lib/api'
 import { Button } from "../ui/button"
 import { Input } from "../ui/input"
 import { Label } from "../ui/label"
@@ -16,7 +16,7 @@ export default function AuthComponent() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+    const { data: { subscription } } = auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_IN') {
         navigate('/')
       }
@@ -44,10 +44,7 @@ export default function AuthComponent() {
     setError(null)
     setLoading(true)
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
+      const { error } = await auth.signIn({ email, password })
       if (error) {
         setError(getErrorMessage(error))
       }
@@ -69,10 +66,7 @@ export default function AuthComponent() {
     
     setLoading(true)
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-      })
+      const { data, error } = await auth.signUp({ email, password })
       if (error) {
         setError(getErrorMessage(error))
       } else if (data?.user) {
@@ -85,7 +79,7 @@ export default function AuthComponent() {
   }
 
   const handleGitHubSignIn = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { error } = await auth.signInWithOAuth({
       provider: 'github'
     })
     if (error) console.log('Error:', error.message)

@@ -1,7 +1,7 @@
 import { Button } from './ui/button'
 import { Workflow, Ticket, BookOpen, UserCircle } from 'lucide-react'
 import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabaseClient'
+import { auth, profiles } from '../lib/api'
 import PropTypes from 'prop-types'
 
 export default function SideBar({ setActiveComponent, onWorkflowAction }) {
@@ -13,15 +13,10 @@ export default function SideBar({ setActiveComponent, onWorkflowAction }) {
 
   const getUserRole = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await auth.getUser()
       if (!user) return
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('auth_id', user.id)
-        .single()
-
+      const { data: profile } = await profiles.getProfile(user.id)
       if (profile) {
         setUserRole(profile.role)
       }

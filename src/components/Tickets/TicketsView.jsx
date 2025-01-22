@@ -78,10 +78,10 @@ export default function TicketsView() {
             >
               <div className="flex-grow">
                 <div className="flex gap-4 text-sm text-gray-600 mt-1">
-                  <span>{ticket.title}</span>
-                  <span>{ticket.stage_name || 'No Workflow'}</span>
+                  <span>{ticket?.ticket_history?.title || 'Untitled Ticket'}</span>
+                  <span>{ticket?.stage_name || 'No Workflow'}</span>
                   <span>•</span>
-                  <span>{ticket.assigned_to_name || 'Unassigned'}</span>
+                  <span>{ticket?.assigned_to_name || 'Unassigned'}</span>
                 </div>
               </div>
               <div className="flex gap-2">

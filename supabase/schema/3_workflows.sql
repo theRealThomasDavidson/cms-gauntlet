@@ -13,7 +13,6 @@ create table workflows (
   name text not null,
   description text,
   org_id uuid references organizations(id) not null,
-  created_by uuid references profiles(id) not null,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   is_active boolean default true
@@ -45,7 +44,6 @@ create table workflow_stage_hooks (
   config jsonb not null default '{}'::jsonb,
   is_active boolean default true,
   created_at timestamptz default now(),
-  created_by uuid references profiles(id) not null,
   -- Add hook configuration validation
   constraint valid_hook_config check (
     hook_type != 'notification' or (
@@ -266,6 +264,85 @@ begin
 end;
 $$ language plpgsql security definer;
 
+-- Function to get default workflow
+create or replace function get_default_workflow(org_uuid uuid)
+returns uuid as $$
+declare
+  workflow_id uuid;
+begin
+  select id into workflow_id
+  from workflows
+  where org_id = org_uuid
+  and is_active = true
+  order by created_at asc
+  limit 1;
+  
+  return workflow_id;
+end;
+$$ language plpgsql security definer;
+
+-- Function to send workflow notifications
+create or replace function send_workflow_notification(
+  p_hook_id uuid,
+  p_ticket_id uuid,
+  p_user_id uuid
+)
+returns void as $$
+declare
+  v_hook workflow_stage_hooks;
+  v_stage workflow_stages;
+  v_workflow workflows;
+  v_ticket tickets;
+  v_notification_text text;
+  v_target_users uuid[];
+begin
+  -- Get hook details
+  select * into v_hook
+  from workflow_stage_hooks
+  where id = p_hook_id;
+
+  -- Get stage and workflow details
+  select s.*, w.* into v_stage, v_workflow
+  from workflow_stages s
+  join workflows w on w.id = s.workflow_id
+  where s.id = v_hook.stage_id;
+
+  -- Get ticket details
+  select * into v_ticket
+  from tickets
+  where id = p_ticket_id;
+
+  -- Replace placeholders in message
+  v_notification_text := replace(v_hook.config->>'message', '{ticket_id}', p_ticket_id::text);
+  v_notification_text := replace(v_notification_text, '{ticket_title}', v_ticket.title);
+  v_notification_text := replace(v_notification_text, '{stage_name}', v_stage.name);
+
+  -- Determine target users based on notification type
+  case v_hook.config->>'target_type'
+    when 'specific_user' then
+      v_target_users := array[(v_hook.config->>'target_user_id')::uuid];
+    when 'role' then
+      select array_agg(id) into v_target_users
+      from profiles
+      where role = (v_hook.config->>'target_role')::user_role
+      and org_id = v_workflow.org_id;
+    when 'ticket_creator' then
+      v_target_users := array[v_ticket.created_by];
+    when 'org_admins' then
+      select array_agg(id) into v_target_users
+      from profiles
+      where role = 'admin'
+      and org_id = v_workflow.org_id;
+  end case;
+
+  -- Insert notifications for each target user
+  insert into notifications (user_id, message, ticket_id)
+  select unnest(v_target_users), v_notification_text, p_ticket_id;
+end;
+$$ language plpgsql security definer;
+
 -- Grant execute permissions
 grant execute on function get_workflow_stages(uuid) to authenticated;
-grant execute on function get_stage_hooks(uuid) to authenticated; 
+grant execute on function get_stage_hooks(uuid) to authenticated;
+grant execute on function get_default_workflow(uuid) to authenticated;
+grant execute on function send_workflow_notification(uuid, uuid, uuid) to authenticated; 
