@@ -80,3 +80,7 @@
  * - comment_directive(comment_ text)
  * - exception(message text)
  */
+
+-- Enable necessary extensions
+create extension if not exists "uuid-ossp" schema extensions;
+create extension if not exists moddatetime schema extensions;
