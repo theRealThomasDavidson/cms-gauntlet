@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import PropTypes from 'prop-types';
 import { supabase } from '../../lib/supabaseClient';
 
 const NOTIFICATION_TARGETS = {
@@ -9,7 +9,7 @@ const NOTIFICATION_TARGETS = {
   ORG_ADMINS: 'org_admins'
 };
 
-export default function StageHookForm({ stageId, hook = null, onSave, onCancel }) {
+export default function StageHookForm({ stageId, hook = null, onSave, onCancel, profile }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [users, setUsers] = useState([]);
@@ -38,14 +38,13 @@ export default function StageHookForm({ stageId, hook = null, onSave, onCancel }
   async function fetchUsers() {
     try {
       const { data, error } = await supabase
-        .from('profiles')
-        .select('id, email, name, role')
-        .order('name');
+        .rpc('get_org_profiles', { p_org_id: profile.org_id });
 
       if (error) throw error;
-      setUsers(data);
+      setUsers(data || []);
     } catch (err) {
       console.error('Error fetching users:', err);
+      setError('Error loading users');
     }
   }
 
@@ -56,22 +55,25 @@ export default function StageHookForm({ stageId, hook = null, onSave, onCancel }
 
     try {
       const hookPayload = {
-        stage_id: stageId,
-        hook_type: hookData.type,
-        config: hookData.config,
-        is_active: hookData.is_active
+        p_stage_id: stageId,
+        p_hook_type: hookData.type,
+        p_config: hookData.config,
+        p_is_active: hookData.is_active
       };
 
       let result;
       if (hook?.id) {
         result = await supabase
           .from('workflow_stage_hooks')
-          .update(hookPayload)
+          .update({
+            hook_type: hookData.type,
+            config: hookData.config,
+            is_active: hookData.is_active
+          })
           .eq('id', hook.id);
       } else {
         result = await supabase
-          .from('workflow_stage_hooks')
-          .insert([hookPayload]);
+          .rpc('create_workflow_stage_hook', hookPayload);
       }
 
       if (result.error) throw result.error;
@@ -200,4 +202,12 @@ export default function StageHookForm({ stageId, hook = null, onSave, onCancel }
       </div>
     </form>
   );
-} 
+}
+
+StageHookForm.propTypes = {
+  stageId: PropTypes.string.isRequired,
+  hook: PropTypes.object,
+  onSave: PropTypes.func.isRequired,
+  onCancel: PropTypes.func.isRequired,
+  profile: PropTypes.object.isRequired
+}; 
