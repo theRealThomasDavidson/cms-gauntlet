@@ -1,29 +1,39 @@
 import { Button } from './ui/button'
 import { Workflow, Ticket, BookOpen, UserCircle } from 'lucide-react'
 import { useState, useEffect } from 'react'
-import { auth, profiles } from '../lib/api'
+import { auth } from '../lib/api'
+import { supabase } from '../lib/supabaseClient'
 import PropTypes from 'prop-types'
 
 export default function SideBar({ setActiveComponent, onWorkflowAction }) {
   const [userRole, setUserRole] = useState(null)
 
   useEffect(() => {
-    getUserRole()
-  }, [])
+    let mounted = true
+    
+    const fetchRole = async () => {
+      try {
+        const { data: { user } } = await auth.getUser()
+        if (!user || !mounted) return
 
-  const getUserRole = async () => {
-    try {
-      const { data: { user } } = await auth.getUser()
-      if (!user) return
-
-      const { data: profile } = await profiles.getProfile(user.id)
-      if (profile) {
-        setUserRole(profile.role)
+        const { data: profile, error } = await supabase
+          .rpc('get_profile_by_auth_id', { user_auth_id: user.id })
+        
+        if (error || !mounted) return
+        
+        if (profile) {
+          setUserRole(profile.role)
+        }
+      } catch (error) {
+        console.error('Error fetching user role:', error)
       }
-    } catch (error) {
-      console.error('Error fetching user role:', error)
     }
-  }
+
+    fetchRole()
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   return (
     <div style={{ 

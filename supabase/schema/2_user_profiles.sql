@@ -16,10 +16,9 @@ returns boolean as $$
 begin
   return (
     select count(*) = 1
-    from auth.users u
-    join profiles p on u.id = p.auth_id
-    where u.id = auth.uid()
-    and p.role = 'admin'
+    from public.profiles
+    where auth_id = auth.uid()
+    and role = 'admin'
   );
 end;
 $$ language plpgsql security definer;
@@ -28,9 +27,9 @@ $$ language plpgsql security definer;
 create table profiles (
   id uuid primary key default uuid_generate_v4(),
   auth_id uuid references auth.users(id) not null unique,
-  org_id uuid references organizations(id),
-  username text unique not null,
-  name text not null,
+  org_id uuid references organizations(id) null,  -- Made optional
+  username text unique,  -- Already optional
+  name text,            -- Already optional
   role user_role not null default 'customer',
   email text not null,
   teams uuid[] default '{}',
@@ -49,7 +48,21 @@ create index profiles_username_idx on profiles(username);
 -- Enable RLS on profiles
 alter table profiles enable row level security;
 
--- Users can read their own profile
+-- Drop existing policies
+drop policy if exists "allow trigger to create profiles" on profiles;
+drop policy if exists "users can view own profile" on profiles;
+drop policy if exists "users can update own profile" on profiles;
+drop policy if exists "admins can view all profiles" on profiles;
+drop policy if exists "admins can update all profiles" on profiles;
+drop policy if exists "admins can delete profiles" on profiles;
+drop policy if exists "users can view org profiles" on profiles;
+
+-- Allow the trigger to create profiles
+create policy "allow trigger to create profiles"
+  on profiles for insert
+  with check (true);
+
+-- Users can view their own profile
 create policy "users can view own profile"
   on profiles for select
   using (auth_id = auth.uid());
@@ -72,49 +85,63 @@ create policy "admins can delete profiles"
   on profiles for delete
   using (is_admin() = true);
 
--- Function to create profile on signup
-create or replace function handle_new_user()
-returns trigger as $$
+-- Create a trigger function to create a profile when a user signs up
+create or replace function public.handle_new_user()
+returns trigger
+security definer set search_path = public
+as $$
 declare
+  default_org_id uuid;
   v_count int;
-  v_default_org_id uuid;
+  v_username text;
+  v_name text;
 begin
-  -- Check if this is the first user
+  -- Get count of existing users
   select count(*) into v_count from profiles;
   
   -- Get or create default org
-  v_default_org_id := get_or_create_default_org();
+  default_org_id := get_or_create_default_org();
+
+  -- Handle both GitHub and email signup metadata formats
+  v_username := coalesce(
+    new.raw_user_meta_data->>'user_name',  -- GitHub format
+    new.raw_user_meta_data->>'username'    -- Email signup format
+  );
   
+  v_name := coalesce(
+    new.raw_user_meta_data->>'user_name',  -- GitHub format
+    new.raw_user_meta_data->>'name'        -- Email signup format
+  );
+  
+  -- Create profile with default org
   insert into public.profiles (
-    auth_id,
-    org_id,
+    auth_id, 
+    email,
     username,
     name,
-    email,
-    role,
-    preferences
+    org_id,
+    role
   )
   values (
-    new.id,
-    v_default_org_id,
+    new.id, 
     new.email,
-    coalesce(new.raw_user_meta_data->>'full_name', new.email),
-    new.email,
+    v_username,
+    v_name,
+    default_org_id,
     case 
       when v_count = 0 then 'admin'::user_role  -- First user is admin
       else 'customer'::user_role                -- Everyone else starts as customer
-    end,
-    jsonb_build_object(
-      'notifications', jsonb_build_object(
-        'email', true,
-        'in_app', true
-      ),
-      'theme', 'light'
-    )
+    end
   );
   return new;
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql;
+
+-- Create a trigger to automatically create profiles
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row
+  execute function public.handle_new_user();
 
 -- Function to change user role
 create or replace function public.change_role(user_email text, new_role user_role)
@@ -129,64 +156,150 @@ end;
 $$ language plpgsql security definer;
 
 -- Function to handle user deletion
-create or replace function delete_user(target_email text)
-returns jsonb as $$
+create or replace function delete_user(email_to_delete text)
+returns json 
+security definer
+set search_path = public
+as $$
 declare
-  v_user_id uuid;
+  v_auth_id uuid;
   v_is_admin boolean;
   v_is_self boolean;
   v_username text;
 begin
-  -- Get the ID and username of the user to be deleted
-  select id into v_user_id
-  from auth.users
-  where email = target_email;
-
-  -- Get username for the message
-  select username into v_username
-  from public.profiles
-  where auth_id = v_user_id;
+  -- Get the auth_id and username for the user being deleted
+  select auth_id, username into v_auth_id, v_username
+  from profiles 
+  where email = email_to_delete;
 
   -- Check if current user is admin
   v_is_admin := is_admin();
   
   -- Check if user is deleting themselves
-  v_is_self := auth.uid() = v_user_id;
+  v_is_self := auth.uid() = v_auth_id;
 
   -- Only allow if admin or self
   if v_is_admin or v_is_self then
-    -- Delete profile first (cascading constraints will handle related data)
-    delete from public.profiles
-    where auth_id = v_user_id;
+    -- Delete the profile
+    delete from profiles 
+    where email = email_to_delete;
 
-    -- Always delete the auth user
-    perform auth.users.delete(v_user_id);
-
-    return jsonb_build_object(
+    return json_build_object(
       'success', true,
-      'message', format('User %s successfully deleted', v_username)
+      'message', format('User %s successfully deleted', v_username),
+      'auth_id', v_auth_id
     );
   else
-    return jsonb_build_object(
+    return json_build_object(
       'success', false,
       'message', 'Unauthorized to delete this user'
     );
   end if;
-
-exception
-  when others then
-    return jsonb_build_object(
-      'success', false,
-      'message', SQLERRM
-    );
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql;
+
+-- Ensure proper grants
+revoke execute on function delete_user(text) from public;
+grant execute on function delete_user(text) to authenticated;
+
+-- Drop the function if it exists
+drop function if exists get_visible_profiles();
+
+-- Create function to get visible profiles based on user role
+create or replace function get_visible_profiles()
+returns setof profiles
+security definer
+language plpgsql
+as $$
+declare
+  v_user_id uuid;
+  v_role user_role;
+  v_org_id uuid;
+begin
+  -- Get current user's ID
+  v_user_id := auth.uid();
+  
+  -- Get user's role and org_id
+  select role, org_id into v_role, v_org_id
+  from profiles
+  where auth_id = v_user_id;
+
+  -- Return appropriate profiles based on role
+  if v_role = 'admin' then
+    -- Admins can see all profiles
+    return query select * from profiles order by created_at desc;
+  else
+    -- Others can only see their own profile
+    return query select * from profiles where auth_id = v_user_id;
+  end if;
+end;
+$$;
+
+-- Grant execute permissions
+grant execute on function get_visible_profiles() to authenticated;
+
+-- Function to update a profile
+create or replace function update_profile(
+  profile_id uuid,
+  new_username text,
+  new_name text,
+  new_email text
+)
+returns void
+security definer
+language plpgsql
+as $$
+begin
+  -- Check if user is updating their own profile or is admin
+  if exists (
+    select 1 
+    from profiles 
+    where id = profile_id 
+    and (
+      auth_id = auth.uid()  -- Own profile
+      or exists (          -- Or is admin
+        select 1 
+        from profiles 
+        where auth_id = auth.uid() 
+        and role = 'admin'
+      )
+    )
+  ) then
+    update profiles
+    set
+      username = coalesce(new_username, username),
+      name = coalesce(new_name, name),
+      email = coalesce(new_email, email)
+    where id = profile_id;
+  else
+    raise exception 'Not authorized to update this profile';
+  end if;
+end;
+$$;
+
+-- Grant execute permission
+grant execute on function update_profile to authenticated;
 
 -- Grant execute permissions
 grant execute on function public.change_role(text, user_role) to authenticated;
-grant execute on function delete_user(text) to authenticated;
 
--- Create trigger for new users
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute function handle_new_user(); 
+-- Function to get a profile by auth_id
+create or replace function get_profile_by_auth_id(user_auth_id uuid)
+returns profiles
+security definer
+language plpgsql
+as $$
+declare
+  v_profile profiles;
+begin
+  -- Get the profile if it belongs to the requesting user or if the requester is an admin
+  select p.* into v_profile
+  from profiles p
+  where p.auth_id = user_auth_id limit 1;
+  
+  return v_profile;
+end;
+$$;
+
+-- Grant execute permission
+grant execute on function get_profile_by_auth_id(uuid) to authenticated; 

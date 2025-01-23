@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { Plus, Trash2, ArrowDown, ArrowUp } from 'lucide-react';
 import PropTypes from 'prop-types';
 
-export default function WorkflowForm({ id, onCancel }) {
+export default function WorkflowForm({ id, onCancel, profile }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [workflow, setWorkflow] = useState({
@@ -81,21 +81,6 @@ export default function WorkflowForm({ id, onCancel }) {
     setError(null);
 
     try {
-      // Get current user session
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-      if (!session) throw new Error('No active session');
-
-      // Get user's org_id at save time
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('id, org_id')
-        .eq('auth_id', session.user.id)
-        .single();
-      
-      if (profileError) throw profileError;
-      if (!profile?.org_id) throw new Error('User not associated with an organization');
-
       let workflowId = id;
       
       // Create or update workflow
@@ -116,16 +101,13 @@ export default function WorkflowForm({ id, onCancel }) {
           .insert([{
             name: workflow.name,
             description: workflow.description,
-            is_active: workflow.is_active,
-            org_id: profile.org_id,
-            created_by: profile.id,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
+            is_active: true,
+            org_id: profile.org_id
           }])
-          .select();
+          .select()
+          .single();
         if (error) throw error;
-        if (!data?.[0]?.id) throw new Error('No workflow ID returned');
-        workflowId = data[0].id;
+        workflowId = data.id;
       }
 
       // First create/update all stages without links
@@ -165,13 +147,6 @@ export default function WorkflowForm({ id, onCancel }) {
         const nextStage = updatedStages[i + 1];
         const prevStage = updatedStages[i - 1];
 
-        console.log(`Updating stage ${stage.name} (${stage.id}):`, {
-          next: nextStage?.name,
-          next_id: nextStage?.id,
-          prev: prevStage?.name,
-          prev_id: prevStage?.id
-        });
-
         const { error } = await supabase
           .from('workflow_stages')
           .update({
@@ -180,16 +155,13 @@ export default function WorkflowForm({ id, onCancel }) {
           })
           .eq('id', stage.id);
         
-        if (error) {
-          console.error('Error updating stage links:', error);
-          throw error;
-        }
+        if (error) throw error;
       }
 
       onCancel(); // Go back to list view
     } catch (err) {
       console.error('Error:', err);
-      setError(err.message || 'Error saving workflow');
+      setError(err.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }
@@ -407,5 +379,6 @@ export default function WorkflowForm({ id, onCancel }) {
 
 WorkflowForm.propTypes = {
   id: PropTypes.string,
-  onCancel: PropTypes.func.isRequired
+  onCancel: PropTypes.func.isRequired,
+  profile: PropTypes.object.isRequired
 }; 

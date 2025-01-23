@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { auth } from '../../lib/api'
+import { supabase } from '@/lib/supabaseClient'
 import { Button } from "../ui/button"
 import { Input } from "../ui/input"
 import { Label } from "../ui/label"
@@ -12,11 +12,13 @@ export default function AuthComponent() {
   const [loading, setLoading] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [username, setUsername] = useState('')
+  const [name, setName] = useState('')
   const [isSignUp, setIsSignUp] = useState(false)
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const { data: { subscription } } = auth.onAuthStateChange((event) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_IN') {
         navigate('/')
       }
@@ -44,45 +46,70 @@ export default function AuthComponent() {
     setError(null)
     setLoading(true)
     try {
-      const { error } = await auth.signIn({ email, password })
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) {
         setError(getErrorMessage(error))
       }
-    } catch (err) {
-      setError('An unexpected error occurred. Please try again.')
+    } catch (error) {
+      setError(getErrorMessage(error))
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const handleEmailSignUp = async (e) => {
     e.preventDefault()
     setError(null)
-    
-    // Basic validation
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters long')
-      return
-    }
-    
     setLoading(true)
     try {
-      const { data, error } = await auth.signUp({ email, password })
+      const { data, error } = await supabase.auth.signUp({ 
+        email, 
+        password,
+        options: {
+          data: {
+            username,
+            name
+          }
+        }
+      })
+      
       if (error) {
         setError(getErrorMessage(error))
-      } else if (data?.user) {
-        console.log('Signup successful:', data)
+      } else {
+        // Update the profile with username and name
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ username, name })
+          .eq('auth_id', data.user.id)
+
+        if (profileError) {
+          setError(getErrorMessage(profileError))
+        } else {
+          setError('Check your email for the confirmation link.')
+        }
       }
-    } catch (err) {
-      setError('An unexpected error occurred. Please try again.')
+    } catch (error) {
+      setError(getErrorMessage(error))
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const handleGitHubSignIn = async () => {
-    const { error } = await auth.signInWithOAuth({
-      provider: 'github'
-    })
-    if (error) console.log('Error:', error.message)
+    setError(null)
+    setLoading(true)
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'github'
+      })
+      if (error) {
+        setError(getErrorMessage(error))
+      }
+    } catch (error) {
+      setError(getErrorMessage(error))
+    } finally {
+      setLoading(false)
+    }
   }
 
   if (loading) {
@@ -122,6 +149,32 @@ export default function AuthComponent() {
           <div className="auth-divider" />
 
           <form onSubmit={isSignUp ? handleEmailSignUp : handleEmailSignIn} className="space-y-4">
+            {isSignUp && (
+              <>
+                <div>
+                  <Label htmlFor="username" className="auth-label">Username</Label>
+                  <Input
+                    id="username"
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required={isSignUp}
+                    className="auth-input"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="name" className="auth-label">Full Name</Label>
+                  <Input
+                    id="name"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required={isSignUp}
+                    className="auth-input"
+                  />
+                </div>
+              </>
+            )}
             <div>
               <Label htmlFor="email" className="auth-label">Email</Label>
               <Input
@@ -147,24 +200,30 @@ export default function AuthComponent() {
             </div>
 
             <div className="flex justify-between text-sm">
-              <button
+              <Button 
+                type="submit"
+                className="auth-button"
+                disabled={loading}
+              >
+                {isSignUp ? 'Sign Up' : 'Sign In'}
+              </Button>
+              <Button
                 type="button"
-                onClick={() => setIsSignUp(!isSignUp)}
-                className="text-primary hover:underline"
+                variant="link"
+                onClick={() => {
+                  setIsSignUp(!isSignUp)
+                  setError(null)
+                  if (!isSignUp) {
+                    setUsername('')
+                    setName('')
+                  }
+                }}
+                className="auth-link"
+                disabled={loading}
               >
                 {isSignUp ? 'Already have an account?' : "Don't have an account?"}
-              </button>
-              <button
-                type="button"
-                className="text-primary hover:underline"
-              >
-                Forgot password?
-              </button>
+              </Button>
             </div>
-
-            <Button type="submit" className="auth-button">
-              {isSignUp ? 'Sign Up' : 'Sign In'}
-            </Button>
           </form>
         </CardContent>
       </Card>

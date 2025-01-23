@@ -37,7 +37,8 @@ create index if not exists idx_tagged_items_item on tagged_items(item_type, item
 
 -- RLS Policies for tag_definitions
 
--- Users can view tags in their organizations
+-- Users can view tags in their organizations]
+drop policy if exists "Users can view tags in their organizations" on tag_definitions;
 create policy "Users can view tags in their organizations"
   on tag_definitions for select
   using (
@@ -54,6 +55,7 @@ create policy "Users can view tags in their organizations"
   );
 
 -- Users can create tags in their organizations
+drop policy if exists "Users can create tags" on tag_definitions;
 create policy "Users can create tags"
   on tag_definitions for insert
   with check (
@@ -70,11 +72,13 @@ create policy "Users can create tags"
   );
 
 -- Users can update their own tags
+drop policy if exists "Users can update their own tags" on tag_definitions;
 create policy "Users can update their own tags"
   on tag_definitions for update
   using (created_by = auth.uid());
 
 -- Users can delete their own tags
+drop policy if exists "Users can delete their own tags" on tag_definitions;
 create policy "Users can delete their own tags"
   on tag_definitions for delete
   using (created_by = auth.uid());
@@ -82,6 +86,7 @@ create policy "Users can delete their own tags"
 -- RLS Policies for tagged_items
 
 -- Users can view tags on items they have access to
+drop policy if exists "Users can view tagged items" on tagged_items;
 create policy "Users can view tagged items"
   on tagged_items for select
   using (
@@ -99,6 +104,7 @@ create policy "Users can view tagged items"
   );
 
 -- Users can add tags to their items
+drop policy if exists "Users can add tags to items" on tagged_items;
 create policy "Users can add tags to items"
   on tagged_items for insert
   with check (
@@ -116,6 +122,7 @@ create policy "Users can add tags to items"
   );
 
 -- Users can remove tags from their items
+drop policy if exists "Users can remove tags from items" on tagged_items;
 create policy "Users can remove tags from items"
   on tagged_items for delete
   using (

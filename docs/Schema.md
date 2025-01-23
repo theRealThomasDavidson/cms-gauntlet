@@ -463,9 +463,9 @@ begin
     v_start_stage_id,
     auth.uid(),
     jsonb_build_object(
-      'title', p_title,
-      'description', p_description,
-      'priority', p_priority,
+        'title', p_title,
+        'description', p_description,
+        'priority', p_priority,
       'workflow_stage_id', v_start_stage_id
     )
   ) returning id into v_history_id;
@@ -555,8 +555,8 @@ begin
     auth.uid(),
     t.latest_history_id,
     v_changes
-  from tickets t
-  join ticket_history h on h.id = t.latest_history_id
+    from tickets t
+    join ticket_history h on h.id = t.latest_history_id
   where t.id = p_ticket_id
   returning id into v_history_id;
 
@@ -678,7 +678,7 @@ from tickets;
 ### Agent Tickets View
 ```sql
 create materialized view agent_tickets as
-select
+  select 
   t.id,
   t.org_id,
   h.title,
@@ -734,4 +734,210 @@ $$ language plpgsql;
 select cron.schedule('*/5 * * * *', $$
   select refresh_ticket_stats();
 $$);
+```
+
+## Knowledge Base
+
+### Categories
+```sql
+create table kb_categories (
+  id uuid primary key default uuid_generate_v4(),
+  org_id uuid references organizations(id) on delete cascade,
+  name text not null,
+  description text,
+  parent_id uuid references kb_categories(id) on delete set null,
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete set null,
+  
+  -- Each category name should be unique within an organization and parent
+  unique(org_id, parent_id, name)
+);
+
+-- Indexes
+create index idx_kb_categories_org on kb_categories(org_id);
+create index idx_kb_categories_parent on kb_categories(parent_id);
+```
+
+### Articles
+```sql
+create table kb_articles (
+  id uuid primary key default uuid_generate_v4(),
+  org_id uuid references organizations(id) on delete cascade,
+  category_id uuid references kb_categories(id) on delete set null,
+  title text not null,
+  content text not null,
+  status text not null default 'draft' check (status in ('draft', 'published', 'archived')),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete set null,
+  published_at timestamptz,
+  
+  -- Search configuration
+  search_vector tsvector generated always as (
+    setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(content, '')), 'B')
+  ) stored
+);
+
+-- Indexes
+create index idx_kb_articles_org on kb_articles(org_id);
+create index idx_kb_articles_category on kb_articles(category_id);
+create index idx_kb_articles_status on kb_articles(status);
+create index idx_kb_articles_search on kb_articles using gin(search_vector);
+```
+
+### Article Comments
+```sql
+create table kb_article_comments (
+  id uuid primary key default uuid_generate_v4(),
+  article_id uuid not null references kb_articles(id) on delete cascade,
+  content text not null,
+  created_by uuid not null references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  parent_id uuid references kb_article_comments(id) on delete cascade,
+  
+  -- For threaded comments support
+  path ltree not null default ''::ltree,
+  depth int not null default 0
+);
+
+-- Indexes
+create index idx_kb_comments_article on kb_article_comments(article_id);
+create index idx_kb_comments_parent on kb_article_comments(parent_id);
+create index idx_kb_comments_path on kb_article_comments using gist(path);
+create index idx_kb_comments_created on kb_article_comments(created_at desc);
+```
+
+## Tagging System
+
+### Tag Definitions
+```sql
+create table tag_definitions (
+  id uuid primary key default uuid_generate_v4(),
+  org_id uuid references organizations(id) on delete cascade,
+  name text not null,
+  description text,
+  color text not null default '#666666',
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete set null,
+  
+  -- Each tag name should be unique within an organization
+  unique(org_id, name),
+  
+  -- Color should be a valid hex code
+  constraint valid_color check (color ~* '^#[0-9a-f]{6}$')
+);
+
+-- Indexes
+create index idx_tag_definitions_org on tag_definitions(org_id);
+```
+
+### Tagged Items
+```sql
+create table tagged_items (
+  tag_id uuid references tag_definitions(id) on delete cascade,
+  item_type text not null check (item_type in ('ticket', 'article')),
+  item_id uuid not null,
+  added_at timestamptz not null default now(),
+  added_by uuid references auth.users(id) on delete set null,
+  
+  primary key (tag_id, item_type, item_id)
+);
+
+-- Indexes
+create index idx_tagged_items_tag on tagged_items(tag_id);
+create index idx_tagged_items_item on tagged_items(item_type, item_id);
+```
+
+## Implementation Notes
+
+### To Implement
+
+1. **Full-Text Search**
+   - Use existing `search_vector` in `kb_articles`
+   - Add search functions for article title and content
+   - Implement relevance scoring and ranking
+
+2. **Article Versioning**
+   - Track article revision history
+   - Store diffs or full content versions
+   - Add rollback functionality
+
+3. **Article Status Workflow**
+   - Implement status transitions (draft → published → archived)
+   - Add validation rules for status changes
+   - Add status-based visibility controls
+
+4. **Future: Semantic Search**
+   - Vector embeddings infrastructure is in place
+   - Uses pgvector extension
+   - Will use OpenAI embeddings (text-embedding-ada-002)
+   - Requires worker system for background processing
+
+### Existing Infrastructure
+
+1. **Background Jobs**
+```sql
+-- Job status tracking
+create type job_status as enum (
+  'pending',
+  'processing',
+  'completed',
+  'failed',
+  'cancelled'
+);
+
+-- Job types for future expansion
+create type job_type as enum (
+  'generate_embeddings',
+  'reprocess_embeddings',
+  'delete_embeddings'
+);
+
+-- Background jobs table
+create table background_jobs (
+  id uuid primary key default uuid_generate_v4(),
+  job_type job_type not null,
+  status job_status not null default 'pending',
+  payload jsonb not null,
+  result jsonb,
+  error text,
+  attempts int not null default 0,
+  max_attempts int not null default 3,
+  -- ... other tracking fields
+);
+```
+
+2. **Vector Storage**
+```sql
+-- Articles table includes vector fields
+create table kb_articles (
+  -- ... existing fields ...
+  title_embedding vector(1536),    -- For future semantic search
+  content_embedding vector(1536),   -- For future semantic search
+);
+
+-- Chunks table for detailed semantic search
+create table kb_article_chunks (
+  -- ... existing fields ...
+  embedding vector(1536),
+  metadata jsonb not null
+);
 ``` 
+
+### Best Practices
+
+1. **Row Level Security (RLS)**
+   - All tables have RLS enabled
+   - Policies based on organization membership
+   - Separate policies for read/write operations
+
+2. **Indexing**
+   - B-tree indexes on foreign keys and lookup fields
+   - GiST indexes for full-text search
+   - IVF-FLAT indexes for future vector similarity search
+
+3. **Data Integrity**
+   - Foreign key constraints
+   - Check constraints for enums
+   - Triggers for automated updates 

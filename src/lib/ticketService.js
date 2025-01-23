@@ -402,25 +402,20 @@ export async function deleteAttachment(attachmentId) {
     .eq('id', attachmentId)
 }
 
-// Get active workflows for the current user's organization
+// Get active workflows using RPC
 export async function getActiveWorkflows() {
-  const { data: profile } = await supabase.auth.getUser();
-  if (!profile) return { data: null, error: 'Not authenticated' };
+  try {
+    const { data, error } = await supabase
+      .rpc('get_active_workflows');
 
-  const { data: userProfile } = await supabase
-    .from('profiles')
-    .select('org_id')
-    .eq('auth_id', profile.user.id)
-    .single();
+    if (error) {
+      console.error('Error fetching workflows:', error);
+      return { data: [], error };
+    }
 
-  if (!userProfile) return { data: null, error: 'User profile not found' };
-
-  const { data, error } = await supabase
-    .from('workflows')
-    .select('id, name')
-    .eq('org_id', userProfile.org_id)
-    .eq('is_active', true)
-    .order('created_at', { ascending: true });
-
-  return { data, error };
+    return { data, error: null };
+  } catch (err) {
+    console.error('Exception fetching workflows:', err);
+    return { data: [], error: err };
+  }
 } 

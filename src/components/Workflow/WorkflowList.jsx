@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { Plus, Edit, Trash2, ArrowRight } from 'lucide-react';
 import PropTypes from 'prop-types';
+import { getActiveWorkflows } from '../../lib/ticketService';
 
 export default function WorkflowList({ onCreateWorkflow, onEditWorkflow, onViewWorkflow }) {
   const [workflows, setWorkflows] = useState([]);
@@ -14,13 +15,9 @@ export default function WorkflowList({ onCreateWorkflow, onEditWorkflow, onViewW
 
   async function fetchWorkflows() {
     try {
-      const { data, error } = await supabase
-        .from('workflows')
-        .select('*')
-        .order('created_at', { ascending: false });
-
+      const { data, error } = await getActiveWorkflows();
       if (error) throw error;
-      setWorkflows(data);
+      setWorkflows(data || []);
     } catch (err) {
       setError('Error loading workflows');
       console.error('Error:', err);
@@ -35,7 +32,7 @@ export default function WorkflowList({ onCreateWorkflow, onEditWorkflow, onViewW
     try {
       const { error } = await supabase
         .from('workflows')
-        .delete()
+        .update({ is_active: false })
         .eq('id', id);
 
       if (error) throw error;

@@ -5,7 +5,7 @@ drop table if exists workflows cascade;
 drop type if exists hook_type cascade;
 
 -- Create hook type enum
-create type hook_type as enum ('email', 'notification', 'webhook', 'assignment');
+create type hook_type as enum ('webhook', 'notification');
 
 -- Create workflows table
 create table workflows (
@@ -13,6 +13,7 @@ create table workflows (
   name text not null,
   description text,
   org_id uuid references organizations(id) not null,
+  created_by uuid references profiles(id),
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   is_active boolean default true
@@ -176,6 +177,87 @@ create policy "admins and agents can manage stage hooks"
       and p.role in ('admin', 'agent')
     )
   );
+drop table if exists webhook_configs cascade;
+-- Create webhook config table
+create table webhook_configs (
+  id uuid primary key default uuid_generate_v4(),
+  stage_id uuid references workflow_stages(id) on delete cascade not null,
+  name text not null,
+  url text not null,
+  method text not null default 'POST',
+  headers jsonb default '{}'::jsonb,
+  template jsonb not null default '{}'::jsonb,
+  is_active boolean default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  -- Basic validation
+  constraint valid_method check (method in ('GET', 'POST', 'PUT', 'PATCH'))
+);
+drop table if exists webhook_logs;
+-- Create webhook logs table
+create table webhook_logs (
+  id uuid primary key default uuid_generate_v4(),
+  webhook_id uuid references webhook_configs(id) on delete set null,
+  ticket_id uuid not null,
+  status_code int,
+  response_body text,
+  error_message text,
+  duration_ms int,
+  created_at timestamptz default now()
+);
+
+-- Create indexes
+create index webhook_configs_stage_idx on webhook_configs(stage_id);
+create index webhook_logs_webhook_idx on webhook_logs(webhook_id);
+create index webhook_logs_ticket_idx on webhook_logs(ticket_id);
+create index webhook_logs_created_idx on webhook_logs(created_at);
+
+-- Enable RLS
+alter table webhook_configs enable row level security;
+alter table webhook_logs enable row level security;
+
+-- RLS Policies for webhook configs
+create policy "org members can view webhook configs"
+  on webhook_configs for select
+  to authenticated
+  using (
+    exists (
+      select 1 from workflow_stages ws
+      join workflows w on w.id = ws.workflow_id
+      join profiles p on p.org_id = w.org_id
+      where p.auth_id = auth.uid()
+      and ws.id = webhook_configs.stage_id
+    )
+  );
+
+create policy "admins can manage webhook configs"
+  on webhook_configs for all
+  to authenticated
+  using (
+    exists (
+      select 1 from workflow_stages ws
+      join workflows w on w.id = ws.workflow_id
+      join profiles p on p.org_id = w.org_id
+      where p.auth_id = auth.uid()
+      and ws.id = webhook_configs.stage_id
+      and p.role = 'admin'
+    )
+  );
+
+-- RLS Policies for webhook logs
+create policy "org members can view webhook logs"
+  on webhook_logs for select
+  to authenticated
+  using (
+    exists (
+      select 1 from webhook_configs wc
+      join workflow_stages ws on ws.id = wc.stage_id
+      join workflows w on w.id = ws.workflow_id
+      join profiles p on p.org_id = w.org_id
+      where p.auth_id = auth.uid()
+      and wc.id = webhook_logs.webhook_id
+    )
+  );
 
 -- Function to get workflow stages without recursion
 create or replace function get_workflow_stages(workflow_uuid uuid)
@@ -281,68 +363,104 @@ begin
 end;
 $$ language plpgsql security definer;
 
--- Function to send workflow notifications
-create or replace function send_workflow_notification(
-  p_hook_id uuid,
-  p_ticket_id uuid,
-  p_user_id uuid
-)
-returns void as $$
+-- Function to get webhook configs for a stage
+create or replace function get_stage_webhooks(stage_uuid uuid)
+returns jsonb as $$
 declare
-  v_hook workflow_stage_hooks;
-  v_stage workflow_stages;
-  v_workflow workflows;
-  v_ticket tickets;
-  v_notification_text text;
-  v_target_users uuid[];
+  result jsonb;
 begin
-  -- Get hook details
-  select * into v_hook
-  from workflow_stage_hooks
-  where id = p_hook_id;
-
-  -- Get stage and workflow details
-  select s.*, w.* into v_stage, v_workflow
-  from workflow_stages s
-  join workflows w on w.id = s.workflow_id
-  where s.id = v_hook.stage_id;
-
-  -- Get ticket details
-  select * into v_ticket
-  from tickets
-  where id = p_ticket_id;
-
-  -- Replace placeholders in message
-  v_notification_text := replace(v_hook.config->>'message', '{ticket_id}', p_ticket_id::text);
-  v_notification_text := replace(v_notification_text, '{ticket_title}', v_ticket.title);
-  v_notification_text := replace(v_notification_text, '{stage_name}', v_stage.name);
-
-  -- Determine target users based on notification type
-  case v_hook.config->>'target_type'
-    when 'specific_user' then
-      v_target_users := array[(v_hook.config->>'target_user_id')::uuid];
-    when 'role' then
-      select array_agg(id) into v_target_users
-      from profiles
-      where role = (v_hook.config->>'target_role')::user_role
-      and org_id = v_workflow.org_id;
-    when 'ticket_creator' then
-      v_target_users := array[v_ticket.created_by];
-    when 'org_admins' then
-      select array_agg(id) into v_target_users
-      from profiles
-      where role = 'admin'
-      and org_id = v_workflow.org_id;
-  end case;
-
-  -- Insert notifications for each target user
-  insert into notifications (user_id, message, ticket_id)
-  select unnest(v_target_users), v_notification_text, p_ticket_id;
+  select jsonb_agg(
+    jsonb_build_object(
+      'id', wc.id,
+      'name', wc.name,
+      'url', wc.url,
+      'method', wc.method,
+      'headers', wc.headers,
+      'template', wc.template,
+      'is_active', wc.is_active,
+      'created_at', wc.created_at
+    )
+  )
+  into result
+  from webhook_configs wc
+  where wc.stage_id = stage_uuid
+  and wc.is_active = true;
+  
+  return result;
 end;
 $$ language plpgsql security definer;
+
+-- Create RPC function to get active workflows
+create or replace function get_active_workflows()
+returns setof workflows
+language sql
+security definer
+as $$
+  select *
+  from workflows
+  where is_active = true
+  order by created_at desc;
+$$;
+
+-- Grant execute permission to authenticated users
+grant execute on function get_active_workflows() to authenticated;
 
 -- Grant execute permissions
 grant execute on function get_workflow_stages(uuid) to authenticated;
 grant execute on function get_stage_hooks(uuid) to authenticated;
 grant execute on function get_default_workflow(uuid) to authenticated;
-grant execute on function send_workflow_notification(uuid, uuid, uuid) to authenticated; 
+grant execute on function get_stage_webhooks(uuid) to authenticated;
+
+-- Function to create a workflow
+create or replace function create_workflow(
+  p_name text,
+  p_description text,
+  p_auth_id uuid
+)
+returns workflows
+language plpgsql
+security definer
+as $$
+declare
+  v_workflow workflows;
+  v_org_id uuid;
+begin
+  -- Get org_id from profiles
+  select org_id into v_org_id
+  from profiles
+  where auth_id = p_auth_id;
+
+  if v_org_id is null then
+    raise exception 'User not associated with an organization';
+  end if;
+
+  insert into workflows (name, description, org_id, is_active)
+  values (p_name, p_description, v_org_id, true)
+  returning * into v_workflow;
+  
+  return v_workflow;
+end;
+$$;
+
+-- Grant execute permission to authenticated users
+grant execute on function create_workflow(text, text, uuid) to authenticated;
+
+-- Function to get user profile
+create or replace function get_user_profile(p_auth_id uuid)
+returns table (
+  id uuid,
+  org_id uuid
+)
+language plpgsql
+security definer
+as $$
+begin
+  return query
+  select profiles.id, profiles.org_id
+  from profiles
+  where auth_id = p_auth_id;
+end;
+$$;
+
+-- Grant execute permission to authenticated users
+grant execute on function get_user_profile(uuid) to authenticated; 

@@ -81,6 +81,16 @@
  * - exception(message text)
  */
 
--- Enable necessary extensions
+-- Create extensions schema
+create schema if not exists extensions;
+
+-- Enable required extensions
 create extension if not exists "uuid-ossp" schema extensions;
 create extension if not exists moddatetime schema extensions;
+create extension if not exists ltree schema extensions;
+create extension if not exists pg_cron schema extensions;
+create extension if not exists vector schema extensions;
+
+-- Grant usage to authenticated users
+grant usage on schema extensions to authenticated;
+grant all on all tables in schema extensions to authenticated;

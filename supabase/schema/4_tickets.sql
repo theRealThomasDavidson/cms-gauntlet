@@ -1,6 +1,6 @@
 -- Drop existing objects if they exist
-drop materialized view if exists agent_tickets cascade;
-drop materialized view if exists workflow_stage_stats cascade;
+drop view if exists agent_tickets cascade;
+drop view if exists workflow_stage_stats cascade;
 drop view if exists customer_tickets cascade;
 drop view if exists ticket_details cascade;
 drop table if exists ticket_attachments cascade;
@@ -8,6 +8,7 @@ drop table if exists ticket_comments cascade;
 drop table if exists ticket_history cascade;
 drop table if exists tickets cascade;
 drop type if exists ticket_priority cascade;
+drop type if exists ticket_status cascade;
 drop index if exists tickets_org_idx;
 drop index if exists tickets_workflow_idx;
 drop index if exists tickets_stage_idx;
@@ -37,6 +38,7 @@ drop function if exists refresh_ticket_stats cascade;
 
 -- Step 1: Create base types
 create type ticket_priority as enum ('low', 'medium', 'high', 'urgent');
+create type ticket_status as enum ('open', 'in_progress', 'resolved', 'closed', 'on_hold');
 
 -- Step 2: Create all tables first
 create table tickets (
@@ -45,7 +47,12 @@ create table tickets (
   workflow_id uuid references workflows(id),
   current_stage_id uuid references workflow_stages(id),
   latest_history_id uuid,
+  title text not null,
+  description text,
+  status ticket_status not null default 'open',
+  priority ticket_priority not null default 'medium',
   created_by uuid references profiles(id) not null,
+  assigned_to uuid references profiles(id),
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -140,7 +147,7 @@ from ticket_history h
 join workflow_stages ws on ws.id = h.workflow_stage_id
 left join profiles p_assigned on p_assigned.id = h.assigned_to;
 
-create materialized view agent_tickets as
+create view agent_tickets as
 select 
   t.id,
   t.org_id,
@@ -172,9 +179,25 @@ join ticket_details td on td.history_id = t.latest_history_id
 LEFT JOIN workflows w on w.id = t.workflow_id
 join profiles p_created on p_created.id = t.created_by;
 
-create index agent_tickets_org_workflow_idx on agent_tickets(org_id, workflow_id);
-create index agent_tickets_priority_idx on agent_tickets(priority);
-create index agent_tickets_assigned_to_idx on agent_tickets(assigned_to);
+create view workflow_stage_stats as
+select 
+  ws.id as stage_id,
+  ws.workflow_id,
+  ws.name as stage_name,
+  w.org_id,
+  count(t.id) as ticket_count,
+  avg(extract(epoch from (now() - t.created_at)))/3600 as avg_hours_in_stage,
+  (
+    select count(*) 
+    from tickets t2 
+    join ticket_history h2 on h2.id = t2.latest_history_id
+    where t2.current_stage_id = ws.id 
+    and h2.priority in ('high', 'urgent')
+  ) as high_priority_count
+from workflow_stages ws
+join workflows w on w.id = ws.workflow_id
+left join tickets t on t.current_stage_id = ws.id
+group by ws.id, ws.workflow_id, ws.name, w.org_id;
 
 create view customer_tickets as
 select 
@@ -204,29 +227,6 @@ where exists (
     or td.assigned_to = p.id
   )
 );
-
-create materialized view workflow_stage_stats as
-select 
-  ws.id as stage_id,
-  ws.workflow_id,
-  ws.name as stage_name,
-  w.org_id,
-  count(t.id) as ticket_count,
-  avg(extract(epoch from (now() - t.created_at)))/3600 as avg_hours_in_stage,
-  (
-    select count(*) 
-    from tickets t2 
-    join ticket_history h2 on h2.id = t2.latest_history_id
-    where t2.current_stage_id = ws.id 
-    and h2.priority in ('high', 'urgent')
-  ) as high_priority_count
-from workflow_stages ws
-join workflows w on w.id = ws.workflow_id
-left join tickets t on t.current_stage_id = ws.id
-group by ws.id, ws.workflow_id, ws.name, w.org_id;
-
-create index workflow_stage_stats_org_idx on workflow_stage_stats(org_id);
-create index workflow_stage_stats_workflow_idx on workflow_stage_stats(workflow_id);
 
 -- Step 7: Drop existing policies
 drop policy if exists "admins_full_access" on tickets;
@@ -463,21 +463,8 @@ create policy "create_tickets"
     )
   );
 
--- Step 9: Create refresh function
-create function refresh_ticket_stats()
-returns void as $$
-begin
-  refresh materialized view concurrently workflow_stage_stats;
-  refresh materialized view concurrently agent_tickets;
-end;
-$$ language plpgsql;
-
--- Step 10: Schedule refresh
-select cron.schedule(
-  'refresh_ticket_stats',
-  '*/5 * * * *',
-  $$select refresh_ticket_stats()$$
-);
+-- Remove refresh function since we don't need it anymore
+drop function if exists refresh_ticket_stats cascade;
 
 -- Function to update ticket history
 create or replace function update_ticket_history()

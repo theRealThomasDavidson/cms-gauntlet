@@ -17,7 +17,12 @@ alter table organizations enable row level security;
 -- Create indexes
 create index organizations_name_idx on organizations(name);
 
--- Basic RLS Policy (will add admin policy after profiles exists)
+-- Allow the function to create organizations
+create policy "allow function to create organizations"
+  on organizations for insert
+  using (true);
+
+-- Allow authenticated users to view organizations
 create policy "authenticated users can view organizations"
   on organizations for select
   to authenticated
@@ -25,14 +30,19 @@ create policy "authenticated users can view organizations"
 
 -- Function to get or create default org
 create or replace function get_or_create_default_org()
-returns uuid as $$
+returns uuid
+security definer
+set search_path = public
+language plpgsql
+as $$
 declare
   default_org_id uuid;
 begin
   -- Check if default org exists
   select id into default_org_id
   from organizations
-  where is_default = true;
+  where is_default = true
+  limit 1;
 
   if default_org_id is null then
     -- Create default org
@@ -43,6 +53,6 @@ begin
 
   return default_org_id;
 end;
-$$ language plpgsql security definer;
+$$;
 
 -- Note: The admin policy will be added in 2_user_profiles.sql after the profiles table exists 
