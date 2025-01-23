@@ -1,138 +1,408 @@
 # Database Schema Design
 
-## Authentication & Users
+## Core Tables
 
-### Decisions Made
-1. Using Supabase built-in auth
-2. GitHub OAuth enabled
-3. No 2FA requirement
-4. Separating auth from profile data
-
-### Tables
-
+### Organizations
 ```sql
--- This is managed by Supabase Auth
-auth.users (
-  id uuid references auth.users primary key,
-  email text,
-  -- other Supabase auth fields
-)
-
--- Our custom profile data
-profiles (
+create table organizations (
   id uuid primary key default uuid_generate_v4(),
-  auth_id uuid references auth.users not null,
-  role user_role not null,
   name text not null,
+  created_at timestamptz default now(),
+  is_active boolean default true,
+  is_default boolean default false
+);
+
+create index organizations_name_idx on organizations(name);
+
+-- RLS Policies
+alter table organizations enable row level security;
+
+create policy "authenticated users can view organizations"
+  on organizations for select
+  to authenticated
+  using (true);
+
+create policy "admins can manage organizations"
+  on organizations for all
+  to authenticated
+  using (exists (
+    select 1 from profiles
+    where auth_id = auth.uid()
+    and role = 'admin'
+  ));
+
+-- Function to get or create default organization
+create or replace function get_or_create_default_org()
+returns uuid as $$
+declare
+  v_org_id uuid;
+begin
+  -- Try to get existing default org
+  select id into v_org_id
+  from organizations
+  where is_default = true;
+  
+  -- Create if none exists
+  if v_org_id is null then
+    insert into organizations (name, is_default)
+    values ('Default Organization', true)
+    returning id into v_org_id;
+  end if;
+  
+  return v_org_id;
+end;
+$$ language plpgsql;
+
+-- Function to check if the user is an admin
+create or replace function is_admin()
+returns boolean as $$
+begin
+  return exists (
+    select 1 from profiles
+    where auth_id = auth.uid()
+    and role = 'admin'
+  );
+end;
+$$ language plpgsql;
+```
+
+### Profiles
+```sql
+create table profiles (
+  id uuid primary key default uuid_generate_v4(),
+  auth_id uuid not null references auth.users(id),
+  username text not null unique,
+  name text not null,
+  email text not null,
+  role user_role not null default 'customer',
+  org_id uuid references organizations(id),
   teams uuid[] default '{}',
   created_at timestamptz default now(),
   last_active timestamptz,
   preferences jsonb default '{}'::jsonb,
   
-  constraint valid_role check (role in ('customer', 'agent', 'admin'))
-)
+  constraint profiles_auth_id_key unique (auth_id)
+);
+
+create index profiles_auth_id_idx on profiles(auth_id);
+create index profiles_email_idx on profiles(email);
+create index profiles_org_id_idx on profiles(org_id);
+create index profiles_role_idx on profiles(role);
+create index profiles_username_idx on profiles(username);
+
+-- RLS Policies
+alter table profiles enable row level security;
+
+create policy "users can view profiles in their org"
+  on profiles for select
+  to authenticated
+  using (
+    org_id in (
+      select org_id from profiles
+      where auth_id = auth.uid()
+    )
+  );
+
+create policy "users can update own profile"
+  on profiles for update
+  to authenticated
+  using (auth_id = auth.uid())
+  with check (auth_id = auth.uid());
+
+create policy "admins can update any profile"
+  on profiles for update
+  to authenticated
+  using (exists (
+    select 1 from profiles
+    where auth_id = auth.uid()
+    and role = 'admin'
+  ));
+
+-- Function to handle new user creation
+create or replace function handle_new_user()
+returns trigger as $$
+declare
+  v_default_org_id uuid;
+begin
+  -- Get default org
+  v_default_org_id := get_or_create_default_org();
+  
+  -- Create profile
+  insert into public.profiles (auth_id, username, name, email, org_id)
+  values (
+    new.id,
+    new.email,
+    coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
+    new.email,
+    v_default_org_id
+  );
+  
+  return new;
+end;
+$$ language plpgsql;
+
+-- Function to change user role
+create or replace function change_role(user_id uuid, new_role user_role)
+returns void as $$
+begin
+  update profiles
+  set role = new_role
+  where auth_id = user_id;
+end;
+$$ language plpgsql;
+
+-- Function to delete user
+create or replace function delete_user(email text)
+returns text as $$
+declare
+  v_user_id uuid;
+  v_username text;
+begin
+  -- Get user info
+  select auth.users.id, profiles.username
+  into v_user_id, v_username
+  from auth.users
+  join public.profiles on profiles.auth_id = auth.users.id
+  where auth.users.email = delete_user.email;
+
+  -- Delete profile first
+  delete from public.profiles where auth_id = v_user_id;
+  
+  -- Delete auth user
+  delete from auth.users where id = v_user_id;
+
+  return format('User %s deleted', v_username);
+end;
+$$ language plpgsql;
 ```
 
-## Tickets System
+## Workflow Management
 
-### Tables
-
+### Workflows
 ```sql
--- Ticket priority enum
-create type ticket_priority as enum ('low', 'medium', 'high', 'urgent');
+create table workflows (
+  id uuid primary key default uuid_generate_v4(),
+  org_id uuid not null references organizations(id),
+  name text not null,
+  description text,
+  is_active boolean default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
 
--- Tickets table (main reference)
+create index workflows_org_idx on workflows(org_id);
+create index workflows_active_idx on workflows(org_id) where is_active = true;
+
+-- RLS Policies
+alter table workflows enable row level security;
+
+create policy "org members can view workflows"
+  on workflows for select
+  to authenticated
+  using (
+    org_id in (
+      select org_id from profiles
+      where auth_id = auth.uid()
+    )
+  );
+
+create policy "admins and agents can manage workflows"
+  on workflows for all
+  to authenticated
+  using (
+    exists (
+      select 1 from profiles
+      where auth_id = auth.uid()
+      and role in ('admin', 'agent')
+      and org_id = workflows.org_id
+    )
+  );
+```
+
+### Workflow Stages
+```sql
+create table workflow_stages (
+  id uuid primary key default uuid_generate_v4(),
+  workflow_id uuid not null references workflows(id) on delete cascade,
+  name text not null,
+  description text,
+  is_start boolean default false,
+  is_end boolean default false,
+  is_other boolean default false,
+  next_stage_id uuid references workflow_stages(id),
+  prev_stage_id uuid references workflow_stages(id),
+  created_at timestamptz default now(),
+  
+  constraint no_self_reference check (id <> next_stage_id and id <> prev_stage_id),
+  constraint workflow_stages_workflow_id_id_key unique (workflow_id, id)
+);
+
+create unique index unique_start_per_workflow on workflow_stages(workflow_id) where is_start = true;
+create unique index unique_end_per_workflow on workflow_stages(workflow_id) where is_end = true;
+create unique index unique_other_per_workflow on workflow_stages(workflow_id) where is_other = true;
+
+-- RLS Policies
+alter table workflow_stages enable row level security;
+
+create policy "org members can view stages"
+  on workflow_stages for select
+  to authenticated
+  using (
+    exists (
+      select 1 from workflows w
+      join profiles p on p.org_id = w.org_id
+      where p.auth_id = auth.uid()
+      and w.id = workflow_stages.workflow_id
+    )
+  );
+
+create policy "admins and agents can manage stages"
+  on workflow_stages for all
+  to authenticated
+  using (
+    exists (
+      select 1 from workflows w
+      join profiles p on p.org_id = w.org_id
+      where p.auth_id = auth.uid()
+      and p.role in ('admin', 'agent')
+      and w.id = workflow_stages.workflow_id
+    )
+  );
+
+-- Function to get workflow stages
+create or replace function get_workflow_stages(p_workflow_id uuid)
+returns table (
+  id uuid,
+  name text,
+  description text,
+  is_start boolean,
+  is_end boolean,
+  next_stage_id uuid,
+  prev_stage_id uuid
+) as $$
+begin
+  return query
+  select
+    ws.id,
+    ws.name,
+    ws.description,
+    ws.is_start,
+    ws.is_end,
+    ws.next_stage_id,
+    ws.prev_stage_id
+  from workflow_stages ws
+  where ws.workflow_id = p_workflow_id
+  order by 
+    ws.is_start desc,
+    ws.created_at asc;
+end;
+$$ language plpgsql;
+```
+
+### Stage Hooks
+```sql
+create table workflow_stage_hooks (
+  id uuid primary key default uuid_generate_v4(),
+  stage_id uuid not null references workflow_stages(id) on delete cascade,
+  hook_type hook_type not null,
+  config jsonb not null default '{}',
+  is_active boolean default true,
+  created_at timestamptz default now(),
+  
+  constraint valid_hook_config check (
+    hook_type <> 'notification' or (
+      config ? 'target_type' and
+      config->>'target_type' = any(array['specific_user', 'role', 'ticket_creator', 'org_admins']) and
+      ((config->>'target_type' = 'specific_user' and config ? 'target_user_id') or
+       (config->>'target_type' = 'role' and config ? 'target_role') or
+       config->>'target_type' = any(array['ticket_creator', 'org_admins'])) and
+      config ? 'message'
+    )
+  )
+);
+
+create index workflow_stage_hooks_stage_idx on workflow_stage_hooks(stage_id);
+
+-- RLS Policies
+alter table workflow_stage_hooks enable row level security;
+
+create policy "org members can view hooks"
+  on workflow_stage_hooks for select
+  to authenticated
+  using (
+    exists (
+      select 1 from workflow_stages ws
+      join workflows w on w.id = ws.workflow_id
+      join profiles p on p.org_id = w.org_id
+      where p.auth_id = auth.uid()
+      and ws.id = workflow_stage_hooks.stage_id
+    )
+  );
+
+create policy "admins and agents can manage hooks"
+  on workflow_stage_hooks for all
+  to authenticated
+  using (
+    exists (
+      select 1 from workflow_stages ws
+      join workflows w on w.id = ws.workflow_id
+      join profiles p on p.org_id = w.org_id
+      where p.auth_id = auth.uid()
+      and p.role in ('admin', 'agent')
+      and ws.id = workflow_stage_hooks.stage_id
+    )
+  );
+
+-- Function to get stage hooks
+create or replace function get_stage_hooks(p_stage_id uuid)
+returns table (
+  id uuid,
+  hook_type hook_type,
+  config jsonb,
+  is_active boolean
+) as $$
+begin
+  return query
+  select
+    wsh.id,
+    wsh.hook_type,
+    wsh.config,
+    wsh.is_active
+  from workflow_stage_hooks wsh
+  where wsh.stage_id = p_stage_id
+  and wsh.is_active = true;
+end;
+$$ language plpgsql;
+```
+
+## Ticket System
+
+### Tickets
+```sql
 create table tickets (
   id uuid primary key default uuid_generate_v4(),
-  org_id uuid references organizations(id) not null,
-  workflow_id uuid references workflows(id) not null,
-  current_stage_id uuid references workflow_stages(id) not null,
-  latest_history_id uuid,
-  created_by uuid references profiles(id) not null,
+  org_id uuid not null references organizations(id),
+  workflow_id uuid references workflows(id),
+  current_stage_id uuid references workflow_stages(id),
+  latest_history_id uuid references ticket_history(id),
+  created_by uuid not null references profiles(id),
   created_at timestamptz default now(),
-  updated_at timestamptz default now(),
-  -- Ensure stage belongs to workflow
-  constraint valid_stage_workflow foreign key (workflow_id, current_stage_id) 
-    references workflow_stages(workflow_id, id)
+  updated_at timestamptz default now()
 );
 
--- Ticket history for tracking all changes
-create table ticket_history (
-  id uuid primary key default uuid_generate_v4(),
-  ticket_id uuid references tickets(id) on delete cascade not null,
-  title text not null,
-  description text,
-  priority ticket_priority not null default 'low',
-  assigned_to uuid references profiles(id),
-  workflow_stage_id uuid references workflow_stages(id) not null,
-  changed_by uuid references profiles(id) not null,
-  changed_at timestamptz default now(),
-  previous_history_id uuid references ticket_history(id),
-  changes jsonb not null -- Records what changed in this revision
-);
-
--- Add foreign key for latest_history_id after both tables exist
-alter table tickets 
-  add constraint fk_latest_history 
-  foreign key (latest_history_id) 
-  references ticket_history(id);
-
--- Comments on tickets
-create table ticket_comments (
-  id uuid primary key default uuid_generate_v4(),
-  ticket_id uuid references tickets(id) on delete cascade not null,
-  content text not null,
-  created_by uuid references profiles(id) not null,
-  created_at timestamptz default now(),
-  is_internal boolean default false -- For agent-only comments
-);
-
--- Attachments
-create table ticket_attachments (
-  id uuid primary key default uuid_generate_v4(),
-  ticket_id uuid references tickets(id) on delete cascade not null,
-  file_name text not null,
-  file_type text not null,
-  file_size integer not null,
-  storage_path text not null,
-  uploaded_by uuid references profiles(id) not null,
-  uploaded_at timestamptz default now()
-);
-
-### Indexes
-```sql
--- Core ticket access patterns
 create index tickets_org_idx on tickets(org_id);
 create index tickets_workflow_idx on tickets(workflow_id);
 create index tickets_stage_idx on tickets(current_stage_id);
 create index tickets_created_by_idx on tickets(created_by);
-
--- Composite indexes for common queries
+create index tickets_latest_history_idx on tickets(latest_history_id);
 create index tickets_org_workflow_idx on tickets(org_id, workflow_id);
 create index tickets_org_stage_idx on tickets(org_id, current_stage_id);
 create index tickets_workflow_stage_idx on tickets(workflow_id, current_stage_id);
+create index tickets_updated_at_idx on tickets(updated_at desc);
+create index tickets_org_updated_idx on tickets(org_id, updated_at desc);
 
--- History and timeline queries
-create index ticket_history_ticket_idx on ticket_history(ticket_id);
-create index ticket_history_stage_idx on ticket_history(workflow_stage_id);
-create index ticket_history_changed_at_idx on ticket_history(changed_at);
-create index ticket_history_assigned_idx on ticket_history(assigned_to);
-
--- Comment management
-create index ticket_comments_ticket_idx on ticket_comments(ticket_id);
-create index ticket_comments_created_at_idx on ticket_comments(created_at);
-create index ticket_comments_internal_idx on ticket_comments(ticket_id) where is_internal = true;
-
--- Attachment organization
-create index ticket_attachments_ticket_idx on ticket_attachments(ticket_id);
-create index ticket_attachments_uploaded_at_idx on ticket_attachments(uploaded_at);
-```
-
-### Functions
-
-```sql
--- Create ticket with initial history
-create function create_ticket(
+-- Function to create ticket
+create or replace function create_ticket(
   p_org_id uuid,
   p_title text,
   p_description text,
@@ -145,7 +415,7 @@ declare
   v_workflow_id uuid;
   v_start_stage_id uuid;
 begin
-  -- Get workflow ID if not provided (earliest active workflow)
+  -- Get workflow ID if not provided
   if p_workflow_id is null then
     select id into v_workflow_id
     from workflows
@@ -193,13 +463,10 @@ begin
     v_start_stage_id,
     auth.uid(),
     jsonb_build_object(
-      'type', 'created',
-      'fields', jsonb_build_object(
         'title', p_title,
         'description', p_description,
         'priority', p_priority,
-        'stage', v_start_stage_id
-      )
+      'workflow_stage_id', v_start_stage_id
     )
   ) returning id into v_history_id;
 
@@ -210,863 +477,467 @@ begin
 
   return v_ticket_id;
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql;
+```
 
--- Get ticket details with latest state
-create function get_ticket_details(p_ticket_id uuid)
-returns json as $$
+### Ticket History
+```sql
+create table ticket_history (
+  id uuid primary key default uuid_generate_v4(),
+  ticket_id uuid not null references tickets(id) on delete cascade,
+  title text not null,
+  description text,
+  priority ticket_priority not null default 'low',
+  assigned_to uuid references profiles(id),
+  workflow_stage_id uuid references workflow_stages(id),
+  changed_by uuid not null references profiles(id),
+  changed_at timestamptz default now(),
+  previous_history_id uuid references ticket_history(id),
+  changes jsonb not null
+);
+
+create index ticket_history_ticket_idx on ticket_history(ticket_id);
+create index ticket_history_stage_idx on ticket_history(workflow_stage_id);
+create index ticket_history_changed_at_idx on ticket_history(changed_at);
+create index ticket_history_assigned_idx on ticket_history(assigned_to);
+create index ticket_history_priority_idx on ticket_history(priority);
+
+-- Function to update ticket
+create or replace function update_ticket(
+  p_ticket_id uuid,
+  p_title text default null,
+  p_description text default null,
+  p_priority ticket_priority default null,
+  p_assigned_to uuid default null,
+  p_stage_id uuid default null
+) returns uuid as $$
 declare
-  v_result json;
+  v_history_id uuid;
+  v_changes jsonb;
 begin
-  select json_build_object(
-    'ticket', json_build_object(
-      'id', t.id,
-      'title', h.title,
-      'description', h.description,
-      'priority', h.priority,
-      'currentStage', json_build_object(
-        'id', ws.id,
-        'name', ws.name,
-        'description', ws.description
-      ),
-      'workflow', json_build_object(
-        'id', w.id,
-        'name', w.name
-      ),
-      'assignedTo', case when h.assigned_to is not null then
-        json_build_object(
-          'id', p.id,
-          'name', p.name,
-          'email', p.email
-        )
-      end,
-      'createdBy', json_build_object(
-        'id', cp.id,
-        'name', cp.name
-      ),
-      'createdAt', t.created_at,
-      'updatedAt', t.updated_at
-    ),
-    'comments', (
-      select json_agg(json_build_object(
-        'id', c.id,
-        'content', c.content,
-        'isInternal', c.is_internal,
-        'createdBy', json_build_object(
-          'id', cp.id,
-          'name', cp.name
-        ),
-        'createdAt', c.created_at
-      ))
-      from ticket_comments c
-      join profiles cp on cp.id = c.created_by
-      where c.ticket_id = t.id
-      and (
-        not c.is_internal
-        or exists (
-          select 1 from profiles
-          where auth_id = auth.uid()
-          and role in ('admin', 'agent')
-        )
-      )
-    ),
-    'attachments', (
-      select json_agg(json_build_object(
-        'id', a.id,
-        'fileName', a.file_name,
-        'fileType', a.file_type,
-        'fileSize', a.file_size,
-        'uploadedBy', json_build_object(
-          'id', up.id,
-          'name', up.name
-        ),
-        'uploadedAt', a.uploaded_at
-      ))
-      from ticket_attachments a
-      join profiles up on up.id = a.uploaded_by
-      where a.ticket_id = t.id
-    ),
-    'history', (
-      select json_agg(json_build_object(
-        'id', h.id,
-        'changes', h.changes,
-        'changedBy', json_build_object(
-          'id', cp.id,
-          'name', cp.name
-        ),
-        'changedAt', h.changed_at
-      ))
-      from ticket_history h
-      join profiles cp on cp.id = h.changed_by
-      where h.ticket_id = t.id
-      order by h.changed_at desc
-    )
-  ) into v_result
-  from tickets t
-  join ticket_history h on h.id = t.latest_history_id
-  join workflow_stages ws on ws.id = t.current_stage_id
-  join workflows w on w.id = t.workflow_id
-  join profiles cp on cp.id = t.created_by
-  left join profiles p on p.id = h.assigned_to
-  where t.id = p_ticket_id;
-
-  return v_result;
-end;
-$$ language plpgsql security definer;
-
--- List organization tickets with filtering
-create function list_org_tickets(
-  p_org_id uuid,
-  p_filters jsonb default '{}'
-) returns json as $$
-declare
-  v_result json;
-  v_where text := 'where t.org_id = $1';
-  v_params text[] := array[p_org_id::text];
-  v_param_num int := 2;
-begin
-  -- Build where clause from filters
-  if p_filters ? 'priority' then
-    v_where := v_where || format(
-      ' and h.priority = any($%s::ticket_priority[])',
-      v_param_num
-    );
-    v_params := v_params || (p_filters->>'priority')::text[];
-    v_param_num := v_param_num + 1;
+  -- Build changes object
+  v_changes := '{}'::jsonb;
+  if p_title is not null then
+    v_changes := v_changes || jsonb_build_object('title', p_title);
+  end if;
+  if p_description is not null then
+    v_changes := v_changes || jsonb_build_object('description', p_description);
+  end if;
+  if p_priority is not null then
+    v_changes := v_changes || jsonb_build_object('priority', p_priority);
+  end if;
+  if p_assigned_to is not null then
+    v_changes := v_changes || jsonb_build_object('assigned_to', p_assigned_to);
+  end if;
+  if p_stage_id is not null then
+    v_changes := v_changes || jsonb_build_object('workflow_stage_id', p_stage_id);
   end if;
 
-  -- Add more filter conditions as needed
-
-  -- Execute dynamic query
-  return query execute format('
-    select json_build_object(
-      ''tickets'', json_agg(json_build_object(
-        ''id'', t.id,
-        ''title'', h.title,
-        ''priority'', h.priority,
-        ''currentStage'', json_build_object(
-          ''id'', ws.id,
-          ''name'', ws.name
-        ),
-        ''assignedTo'', case when h.assigned_to is not null then
-          json_build_object(
-            ''id'', p.id,
-            ''name'', p.name
-          )
-        end,
-        ''createdAt'', t.created_at,
-        ''updatedAt'', t.updated_at
-      )),
-      ''pagination'', json_build_object(
-        ''total'', count(*) over(),
-        ''page'', 1,
-        ''perPage'', 20
-      )
-    )
+  -- Create history entry
+  insert into ticket_history (
+    ticket_id,
+    title,
+    description,
+    priority,
+    assigned_to,
+    workflow_stage_id,
+    changed_by,
+    previous_history_id,
+    changes
+  )
+  select
+    t.id,
+    coalesce(p_title, h.title),
+    coalesce(p_description, h.description),
+    coalesce(p_priority, h.priority),
+    coalesce(p_assigned_to, h.assigned_to),
+    coalesce(p_stage_id, h.workflow_stage_id),
+    auth.uid(),
+    t.latest_history_id,
+    v_changes
     from tickets t
     join ticket_history h on h.id = t.latest_history_id
-    join workflow_stages ws on ws.id = t.current_stage_id
-    left join profiles p on p.id = h.assigned_to
-    %s
-  ', v_where) using v_params;
-end;
-$$ language plpgsql security definer;
+  where t.id = p_ticket_id
+  returning id into v_history_id;
 
-### RLS Policies
-```sql
--- Enable RLS on all ticket-related tables
-alter table tickets enable row level security;
-alter table ticket_history enable row level security;
-alter table ticket_comments enable row level security;
-alter table ticket_attachments enable row level security;
+  -- Update ticket
+  update tickets
+  set
+    current_stage_id = coalesce(p_stage_id, current_stage_id),
+    latest_history_id = v_history_id,
+    updated_at = now()
+  where id = p_ticket_id;
 
--- Ticket Visibility Policies
-create policy "admins_full_access"
-  on tickets for all
-  to authenticated
-  using (
-    exists (
-      select 1 from profiles p
-      where p.auth_id = auth.uid()
-      and p.org_id = tickets.org_id
-      and p.role = 'admin'
-    )
-  );
-
-create policy "agents_org_tickets"
-  on tickets for select
-  to authenticated
-  using (
-    exists (
-      select 1 from profiles p
-      where p.auth_id = auth.uid()
-      and p.org_id = tickets.org_id
-      and p.role = 'agent'
-    )
-  );
-
-create policy "users_assigned_tickets"
-  on tickets for select
-  to authenticated
-  using (
-    exists (
-      select 1 from profiles p
-      join ticket_history h on h.assigned_to = p.id
-      where p.auth_id = auth.uid()
-      and h.ticket_id = tickets.id
-      and h.id = tickets.latest_history_id
-    )
-    or
-    created_by = (
-      select id from profiles
-      where auth_id = auth.uid()
-    )
-  );
-
--- Ticket History Policies
-create policy "agent_full_history"
-  on ticket_history for select
-  to authenticated
-  using (
-    exists (
-      select 1 from profiles p
-      join tickets t on t.org_id = p.org_id
-      where p.auth_id = auth.uid()
-      and t.id = ticket_history.ticket_id
-      and p.role in ('admin', 'agent')
-    )
-  );
-
-create policy "user_limited_history"
-  on ticket_history for select
-  to authenticated
-  using (
-    exists (
-      select 1 from tickets t
-      join profiles p on p.org_id = t.org_id
-      where t.id = ticket_history.ticket_id
-      and p.auth_id = auth.uid()
-      and p.role = 'customer'
-      and (
-        t.created_by = p.id
-        or exists (
-          select 1 from ticket_history h
-          where h.ticket_id = t.id
-          and h.assigned_to = p.id
-        )
-      )
-    )
-  );
-
--- Comment Policies
-create policy "view_external_comments"
-  on ticket_comments for select
-  to authenticated
-  using (
-    exists (
-      select 1 from tickets t
-      join profiles p on p.org_id = t.org_id
-      where t.id = ticket_comments.ticket_id
-      and p.auth_id = auth.uid()
-      and not is_internal
-    )
-  );
-
-create policy "view_internal_comments"
-  on ticket_comments for select
-  to authenticated
-  using (
-    exists (
-      select 1 from tickets t
-      join profiles p on p.org_id = t.org_id
-      where t.id = ticket_comments.ticket_id
-      and p.auth_id = auth.uid()
-      and p.role in ('admin', 'agent')
-      and is_internal
-    )
-  );
-
-create policy "create_external_comments"
-  on ticket_comments for insert
-  to authenticated
-  with check (
-    not is_internal
-    and exists (
-      select 1 from tickets t
-      join profiles p on p.org_id = t.org_id
-      where t.id = ticket_comments.ticket_id
-      and p.auth_id = auth.uid()
-    )
-  );
-
-create policy "create_internal_comments"
-  on ticket_comments for insert
-  to authenticated
-  with check (
-    is_internal
-    and exists (
-      select 1 from tickets t
-      join profiles p on p.org_id = t.org_id
-      where t.id = ticket_comments.ticket_id
-      and p.auth_id = auth.uid()
-      and p.role in ('admin', 'agent')
-    )
-  );
-
-create policy "manage_own_comments"
-  on ticket_comments for update
-  to authenticated
-  using (
-    created_by = (
-      select id from profiles
-      where auth_id = auth.uid()
-    )
-  );
-
--- Attachment Policies
-create policy "view_attachments"
-  on ticket_attachments for select
-  to authenticated
-  using (
-    exists (
-      select 1 from tickets t
-      join profiles p on p.org_id = t.org_id
-      where t.id = ticket_attachments.ticket_id
-      and p.auth_id = auth.uid()
-    )
-  );
-
-create policy "upload_attachments"
-  on ticket_attachments for insert
-  to authenticated
-  with check (
-    exists (
-      select 1 from tickets t
-      join profiles p on p.org_id = t.org_id
-      where t.id = ticket_attachments.ticket_id
-      and p.auth_id = auth.uid()
-      and (
-        t.created_by = p.id
-        or exists (
-          select 1 from ticket_history h
-          where h.ticket_id = t.id
-          and h.assigned_to = p.id
-        )
-        or p.role in ('admin', 'agent')
-      )
-    )
-  );
-
-create policy "manage_attachments"
-  on ticket_attachments for delete
-  to authenticated
-  using (
-    exists (
-      select 1 from tickets t
-      join profiles p on p.org_id = t.org_id
-      where t.id = ticket_attachments.ticket_id
-      and p.auth_id = auth.uid()
-      and (p.role in ('admin', 'agent') or uploaded_by = p.id)
-    )
-  );
-```
-
-## Knowledge Base
-
-### Required Tables
-```sql
--- Articles table
-create table articles (
-  id uuid primary key default uuid_generate_v4(),
-  title text not null,
-  content text not null,
-  categories text[] default '{}',
-  tags text[] default '{}',
-  author uuid references profiles(id) not null,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now(),
-  version integer default 1
-);
-
--- Article versions for version control
-create table article_versions (
-  id uuid primary key default uuid_generate_v4(),
-  article_id uuid references articles(id) on delete cascade not null,
-  content text not null,
-  created_at timestamptz default now(),
-  created_by uuid references profiles(id) not null
-);
-
--- Categories for organization
-create table categories (
-  id uuid primary key default uuid_generate_v4(),
-  name text not null,
-  description text,
-  parent_id uuid references categories(id),
-  created_at timestamptz default now()
-);
-
--- Function to update article timestamp and version
-create or replace function update_article_version()
-returns trigger as $$
-begin
-  new.updated_at = now();
-  new.version = old.version + 1;
-  return new;
+  return v_history_id;
 end;
 $$ language plpgsql;
-
-create trigger update_article_version
-before update on articles
-for each row
-execute function update_article_version();
 ```
 
-### Indexes
+### Comments
 ```sql
--- For article queries
-create index articles_categories_idx using gin(categories);
-create index articles_tags_idx using gin(tags);
-create index article_versions_article_id_idx on article_versions(article_id);
-create index categories_parent_id_idx on categories(parent_id);
-```
-
-## Notifications
-
-### Decisions Made
-1. Using Supabase real-time for ticket updates
-2. 30-day retention policy for notifications
-3. Real-time notifications for:
-   - Ticket assignees
-   - Ticket creators (users)
-
-### Required Tables
-```sql
--- Notification types enum
-create type notification_type as enum (
-  'ticket_created',
-  'ticket_assigned',
-  'ticket_updated',
-  'ticket_commented',
-  'ticket_resolved',
-  'ticket_closed'
-);
-
--- Notifications table
-create table notifications (
+create table ticket_comments (
   id uuid primary key default uuid_generate_v4(),
-  user_id uuid references profiles(id) not null,
-  type notification_type not null,
-  content jsonb not null,
-  read boolean default false,
+  ticket_id uuid not null references tickets(id) on delete cascade,
+  content text not null,
+  created_by uuid not null references profiles(id),
   created_at timestamptz default now(),
-  expires_at timestamptz default (now() + interval '30 days')
+  is_internal boolean default false
 );
 
--- Trigger function for ticket notifications
-create or replace function create_ticket_notification()
-returns trigger as $$
-begin
-  -- New ticket notification
-  if TG_OP = 'INSERT' then
-    insert into notifications (user_id, type, content)
-    values (
-      new.created_by,
-      'ticket_created',
-      jsonb_build_object(
-        'ticket_id', new.id,
-        'title', new.title
-      )
-    );
-  
-  -- Ticket assignment notification
-  elsif TG_OP = 'UPDATE' and new.assigned_to is distinct from old.assigned_to then
-    insert into notifications (user_id, type, content)
-    values (
-      new.assigned_to,
-      'ticket_assigned',
-      jsonb_build_object(
-        'ticket_id', new.id,
-        'title', new.title
-      )
-    );
-  
-  -- Status change notification
-  elsif TG_OP = 'UPDATE' and new.status is distinct from old.status then
-    insert into notifications (user_id, type, content)
-    values (
-      new.created_by,
-      case new.status
-        when 'resolved' then 'ticket_resolved'
-        when 'closed' then 'ticket_closed'
-        else 'ticket_updated'
-      end,
-      jsonb_build_object(
-        'ticket_id', new.id,
-        'title', new.title,
-        'old_status', old.status,
-        'new_status', new.status
-      )
-    );
-  end if;
-  
-  return new;
-end;
-$$ language plpgsql;
+create index ticket_comments_ticket_idx on ticket_comments(ticket_id);
+create index ticket_comments_created_at_idx on ticket_comments(created_at);
+create index ticket_comments_internal_idx on ticket_comments(ticket_id) where is_internal = true;
 
--- Trigger for ticket notifications
-create trigger ticket_notifications
-after insert or update on tickets
-for each row
-execute function create_ticket_notification();
-
--- Trigger function for comment notifications
+-- Function to create comment notification
 create or replace function create_comment_notification()
 returns trigger as $$
 begin
-  -- Don't notify for internal comments
-  if new.is_internal then
-    return new;
-  end if;
-
-  -- Get the ticket creator and assignee
-  insert into notifications (user_id, type, content)
-  select 
+  -- Create notifications for ticket creator and assignee
+  insert into notifications (
     user_id,
-    'ticket_commented',
-    jsonb_build_object(
-      'ticket_id', new.ticket_id,
-      'comment_id', new.id,
-      'commenter', new.created_by
-    )
+    type,
+    title,
+    content,
+    link,
+    expires_at
+  )
+  select
+    user_id,
+    'comment',
+    format('New comment on ticket #%s', new.ticket_id),
+    substring(new.content from 1 for 100),
+    format('/tickets/%s', new.ticket_id),
+    now() + interval '7 days'
   from (
     select created_by as user_id from tickets where id = new.ticket_id
     union
     select assigned_to from tickets where id = new.ticket_id and assigned_to is not null
   ) users
-  where user_id != new.created_by;  -- Don't notify the commenter
+  where user_id != new.created_by;
   
   return new;
 end;
 $$ language plpgsql;
-
--- Trigger for comment notifications
-create trigger comment_notifications
-after insert on ticket_comments
-for each row
-execute function create_comment_notification();
-
--- Enable real-time for notifications
-alter publication supabase_realtime add table notifications;
-
--- Automated cleanup function
-create or replace function cleanup_old_notifications()
-returns void as $$
-begin
-  delete from notifications
-  where expires_at < now();
-end;
-$$ language plpgsql;
-
--- Run cleanup daily
-create extension if not exists pg_cron;
-select cron.schedule('0 0 * * *', $$
-  select cleanup_old_notifications();
-$$);
 ```
 
-### Indexes
+### Attachments
 ```sql
--- For notification queries
-create index notifications_user_id_idx on notifications(user_id);
-create index notifications_created_at_idx on notifications(created_at);
-create index notifications_expires_at_idx on notifications(expires_at);
-```
-
-### RLS Policies
-```sql
--- Enable RLS
-alter table notifications enable row level security;
-
--- Users can only see their own notifications
-create policy "users_own_notifications"
-  on notifications
-  for all
-  to authenticated
-  using (
-    user_id = (
-      select id from profiles
-      where auth_id = auth.uid()
-    )
-  );
-```
-
-## Organizations & Invites
-
-### Required Tables
-```sql
--- Organizations table
-create table organizations (
+create table ticket_attachments (
   id uuid primary key default uuid_generate_v4(),
-  name text not null,
-  created_at timestamptz default now(),
-  created_by uuid references profiles(id) not null
+  ticket_id uuid not null references tickets(id) on delete cascade,
+  file_name text not null,
+  file_type text not null,
+  file_size integer not null,
+  storage_path text not null,
+  uploaded_by uuid not null references profiles(id),
+  uploaded_at timestamptz default now()
 );
 
--- Organization members with org-specific roles
-create table org_members (
-  org_id uuid references organizations(id) not null,
-  user_id uuid references profiles(id) not null,
-  org_role text not null check (org_role in ('org_admin', 'org_agent', 'org_customer')),
-  added_at timestamptz default now(),
-  added_by uuid references profiles(id) not null,
-  primary key (org_id, user_id)
-);
-
--- Invite codes for initial admin setup
-create table admin_invite_codes (
-  code text primary key,
-  created_at timestamptz default now(),
-  expires_at timestamptz not null,
-  used_at timestamptz,
-  used_by uuid references profiles(id)
-);
-
--- Organization invites
-create table org_invites (
-  id uuid primary key default uuid_generate_v4(),
-  org_id uuid references organizations(id) not null,
-  email text not null,
-  role user_role not null,
-  created_at timestamptz default now(),
-  expires_at timestamptz not null,
-  created_by uuid references profiles(id) not null,
-  used_at timestamptz,
-  used_by uuid references profiles(id)
-);
-
--- Modified profile creation trigger to use env var for initial admin
-create or replace function public.handle_new_user()
-returns trigger as $$
-begin
-  insert into public.profiles (auth_id, name, role, email)
-  values (
-    new.id,
-    coalesce(new.raw_user_meta_data->>'full_name', new.email),
-    case 
-      when new.email = current_setting('app.initial_admin_email', true) then 'admin'
-      else 'customer'
-    end,
-    new.email
-  );
-  return new;
-end;
-$$ language plpgsql security definer;
-
--- Note: Set the following environment variable in Supabase:
--- app.initial_admin_email = 'your-admin@email.com'
+create index ticket_attachments_ticket_idx on ticket_attachments(ticket_id);
+create index ticket_attachments_uploaded_at_idx on ticket_attachments(uploaded_at);
 ```
 
-### RLS Policies
+## Views
+
+### Customer Tickets View
 ```sql
--- Organizations
-alter table organizations enable row level security;
-
--- Allow customers to create orgs
-create policy "create_org"
-  on organizations
-  for insert
-  to authenticated
-  with check (
-    exists (
-      select 1 from profiles
-      where profiles.auth_id = auth.uid()
-      and (profiles.role = 'admin' or profiles.role = 'customer')
-    )
-  );
-
--- Creator automatically becomes org_admin
-create or replace function handle_new_org()
-returns trigger as $$
-begin
-  insert into org_members (org_id, user_id, org_role, added_by)
-  values (new.id, new.created_by, 'org_admin', new.created_by);
-  return new;
-end;
-$$ language plpgsql;
-
-create trigger on_org_created
-  after insert on organizations
-  for each row
-  execute function handle_new_org();
-
--- Org members can view their org
-create policy "view_own_org"
-  on organizations
-  for select
-  to authenticated
-  using (
-    exists (
-      select 1 from org_members
-      where org_members.org_id = organizations.id
-      and org_members.user_id = (
-        select id from profiles
-        where auth_id = auth.uid()
-      )
-    )
-  );
-
--- Only org admins can modify their org
-create policy "manage_own_org"
-  on organizations
-  for update
-  to authenticated
-  using (
-    exists (
-      select 1 from org_members
-      where org_members.org_id = organizations.id
-      and org_members.user_id = (
-        select id from profiles
-        where auth_id = auth.uid()
-      )
-      and org_members.org_role = 'org_admin'
-    )
-  );
-```
-
-## Environment Setup
-
-### Required Environment Variables
-```sql
--- Set up initial admin email
-ALTER DATABASE postgres 
-SET "app.initial_admin_email" = 'your-admin@email.com';
-
--- Note: Replace 'your-admin@email.com' with the actual admin email
--- This needs to be run once during initial setup
--- The handle_new_user() trigger will use this to identify the admin user during signup
-```
-
-### Views and Materialized Views
-```sql
--- Agent view of tickets with full details
-create materialized view agent_tickets as
-select 
-  t.id,
-  t.org_id,
-  t.workflow_id,
-  t.current_stage_id,
-  h.title,
-  h.description,
-  h.priority,
-  h.assigned_to,
-  t.created_by,
-  t.created_at,
-  t.updated_at,
-  w.name as workflow_name,
-  ws.name as stage_name,
-  p_assigned.name as assigned_to_name,
-  p_created.name as created_by_name,
-  (
-    select count(*) 
-    from ticket_comments tc 
-    where tc.ticket_id = t.id
-  ) as comment_count,
-  (
-    select count(*) 
-    from ticket_attachments ta 
-    where ta.ticket_id = t.id
-  ) as attachment_count
-from tickets t
-join ticket_history h on h.id = t.latest_history_id
-join workflows w on w.id = t.workflow_id
-join workflow_stages ws on ws.id = t.current_stage_id
-left join profiles p_assigned on p_assigned.id = h.assigned_to
-join profiles p_created on p_created.id = t.created_by;
-
-create index agent_tickets_org_workflow_idx on agent_tickets(org_id, workflow_id);
-create index agent_tickets_priority_idx on agent_tickets(priority);
-create index agent_tickets_assigned_to_idx on agent_tickets(assigned_to);
-
--- Customer view of tickets (limited details)
 create view customer_tickets as
 select 
+  id,
+  title,
+  priority,
+  stage_name,
+  assigned_to_display,
+  created_at,
+  updated_at,
+  public_comment_count
+from tickets;
+```
+
+### Ticket Details View
+```sql
+create view ticket_details as
+select
+  ticket_id,
+  history_id,
+  title,
+  description,
+  priority,
+  workflow_stage_id,
+  stage_name,
+  assigned_to,
+  assigned_to_name,
+  assigned_to_role,
+  changed_by,
+  changed_at
+from tickets;
+```
+
+## Materialized Views
+
+### Agent Tickets View
+```sql
+create materialized view agent_tickets as
+  select 
   t.id,
+  t.org_id,
   h.title,
   h.priority,
   ws.name as stage_name,
-  case 
-    when p_assigned.role in ('admin', 'agent') then 'Support Team'
-    else p_assigned.name
-  end as assigned_to_display,
+  p.name as assigned_to_name,
   t.created_at,
   t.updated_at,
-  (
-    select count(*) 
-    from ticket_comments tc 
-    where tc.ticket_id = t.id 
-    and not tc.is_internal
-  ) as public_comment_count
+  count(tc.id) filter (where not tc.is_internal) as public_comment_count,
+  count(tc.id) filter (where tc.is_internal) as internal_comment_count
 from tickets t
 join ticket_history h on h.id = t.latest_history_id
-join workflow_stages ws on ws.id = t.current_stage_id
-left join profiles p_assigned on p_assigned.id = h.assigned_to
-where exists (
-  select 1 from profiles p
-  where p.auth_id = auth.uid()
-  and (
-    t.created_by = p.id
-    or h.assigned_to = p.id
-  )
-);
+left join workflow_stages ws on ws.id = t.current_stage_id
+left join profiles p on p.id = h.assigned_to
+left join ticket_comments tc on tc.ticket_id = t.id
+group by t.id, t.org_id, h.title, h.priority, ws.name, p.name, t.created_at, t.updated_at;
 
--- Workflow stage statistics
+create unique index agent_tickets_id_idx on agent_tickets(id);
+create index agent_tickets_org_idx on agent_tickets(org_id);
+```
+
+### Workflow Stage Stats
+```sql
 create materialized view workflow_stage_stats as
-select 
+select
   ws.id as stage_id,
   ws.workflow_id,
   ws.name as stage_name,
-  w.org_id,
   count(t.id) as ticket_count,
-  avg(extract(epoch from (now() - t.created_at)))/3600 as avg_hours_in_stage,
-  (
-    select count(*) 
-    from tickets t2 
-    join ticket_history h2 on h2.id = t2.latest_history_id
-    where t2.current_stage_id = ws.id 
-    and h2.priority in ('high', 'urgent')
-  ) as high_priority_count
+  avg(extract(epoch from (now() - t.updated_at))) as avg_time_in_stage
 from workflow_stages ws
-join workflows w on w.id = ws.workflow_id
 left join tickets t on t.current_stage_id = ws.id
-group by ws.id, ws.workflow_id, ws.name, w.org_id;
+group by ws.id, ws.workflow_id, ws.name;
 
-create index workflow_stage_stats_org_idx on workflow_stage_stats(org_id);
+create unique index workflow_stage_stats_id_idx on workflow_stage_stats(stage_id);
 create index workflow_stage_stats_workflow_idx on workflow_stage_stats(workflow_id);
+```
 
--- Additional indexes for common queries
-create index tickets_latest_history_idx on tickets(latest_history_id);
-create index ticket_history_priority_idx on ticket_history(priority);
-create index tickets_updated_at_idx on tickets(updated_at desc);
-create index tickets_org_updated_idx on tickets(org_id, updated_at desc);
-create index tickets_workflow_priority_idx on tickets(workflow_id, (
-  select priority from ticket_history 
-  where id = tickets.latest_history_id
-));
+## Scheduled Tasks
 
--- Refresh strategy for materialized views
-create function refresh_ticket_stats()
+### Materialized View Refresh
+```sql
+-- Function to refresh materialized views
+create or replace function refresh_ticket_stats()
 returns void as $$
 begin
-  refresh materialized view concurrently workflow_stage_stats;
   refresh materialized view concurrently agent_tickets;
+  refresh materialized view concurrently workflow_stage_stats;
 end;
 $$ language plpgsql;
 
--- Set up periodic refresh (every 5 minutes)
-select cron.schedule(
-  'refresh_ticket_stats',
-  '*/5 * * * *',
-  $$select refresh_ticket_stats()$$
+-- Schedule refresh every 5 minutes
+select cron.schedule('*/5 * * * *', $$
+  select refresh_ticket_stats();
+$$);
+```
+
+## Knowledge Base
+
+### Categories
+```sql
+create table kb_categories (
+  id uuid primary key default uuid_generate_v4(),
+  org_id uuid references organizations(id) on delete cascade,
+  name text not null,
+  description text,
+  parent_id uuid references kb_categories(id) on delete set null,
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete set null,
+  
+  -- Each category name should be unique within an organization and parent
+  unique(org_id, parent_id, name)
+);
+
+-- Indexes
+create index idx_kb_categories_org on kb_categories(org_id);
+create index idx_kb_categories_parent on kb_categories(parent_id);
+```
+
+### Articles
+```sql
+create table kb_articles (
+  id uuid primary key default uuid_generate_v4(),
+  org_id uuid references organizations(id) on delete cascade,
+  category_id uuid references kb_categories(id) on delete set null,
+  title text not null,
+  content text not null,
+  status text not null default 'draft' check (status in ('draft', 'published', 'archived')),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete set null,
+  published_at timestamptz,
+  
+  -- Search configuration
+  search_vector tsvector generated always as (
+    setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(content, '')), 'B')
+  ) stored
+);
+
+-- Indexes
+create index idx_kb_articles_org on kb_articles(org_id);
+create index idx_kb_articles_category on kb_articles(category_id);
+create index idx_kb_articles_status on kb_articles(status);
+create index idx_kb_articles_search on kb_articles using gin(search_vector);
+```
+
+### Article Comments
+```sql
+create table kb_article_comments (
+  id uuid primary key default uuid_generate_v4(),
+  article_id uuid not null references kb_articles(id) on delete cascade,
+  content text not null,
+  created_by uuid not null references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  parent_id uuid references kb_article_comments(id) on delete cascade,
+  
+  -- For threaded comments support
+  path ltree not null default ''::ltree,
+  depth int not null default 0
+);
+
+-- Indexes
+create index idx_kb_comments_article on kb_article_comments(article_id);
+create index idx_kb_comments_parent on kb_article_comments(parent_id);
+create index idx_kb_comments_path on kb_article_comments using gist(path);
+create index idx_kb_comments_created on kb_article_comments(created_at desc);
+```
+
+## Tagging System
+
+### Tag Definitions
+```sql
+create table tag_definitions (
+  id uuid primary key default uuid_generate_v4(),
+  org_id uuid references organizations(id) on delete cascade,
+  name text not null,
+  description text,
+  color text not null default '#666666',
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete set null,
+  
+  -- Each tag name should be unique within an organization
+  unique(org_id, name),
+  
+  -- Color should be a valid hex code
+  constraint valid_color check (color ~* '^#[0-9a-f]{6}$')
+);
+
+-- Indexes
+create index idx_tag_definitions_org on tag_definitions(org_id);
+```
+
+### Tagged Items
+```sql
+create table tagged_items (
+  tag_id uuid references tag_definitions(id) on delete cascade,
+  item_type text not null check (item_type in ('ticket', 'article')),
+  item_id uuid not null,
+  added_at timestamptz not null default now(),
+  added_by uuid references auth.users(id) on delete set null,
+  
+  primary key (tag_id, item_type, item_id)
+);
+
+-- Indexes
+create index idx_tagged_items_tag on tagged_items(tag_id);
+create index idx_tagged_items_item on tagged_items(item_type, item_id);
+```
+
+## Implementation Notes
+
+### To Implement
+
+1. **Full-Text Search**
+   - Use existing `search_vector` in `kb_articles`
+   - Add search functions for article title and content
+   - Implement relevance scoring and ranking
+
+2. **Article Versioning**
+   - Track article revision history
+   - Store diffs or full content versions
+   - Add rollback functionality
+
+3. **Article Status Workflow**
+   - Implement status transitions (draft → published → archived)
+   - Add validation rules for status changes
+   - Add status-based visibility controls
+
+4. **Future: Semantic Search**
+   - Vector embeddings infrastructure is in place
+   - Uses pgvector extension
+   - Will use OpenAI embeddings (text-embedding-ada-002)
+   - Requires worker system for background processing
+
+### Existing Infrastructure
+
+1. **Background Jobs**
+```sql
+-- Job status tracking
+create type job_status as enum (
+  'pending',
+  'processing',
+  'completed',
+  'failed',
+  'cancelled'
+);
+
+-- Job types for future expansion
+create type job_type as enum (
+  'generate_embeddings',
+  'reprocess_embeddings',
+  'delete_embeddings'
+);
+
+-- Background jobs table
+create table background_jobs (
+  id uuid primary key default uuid_generate_v4(),
+  job_type job_type not null,
+  status job_status not null default 'pending',
+  payload jsonb not null,
+  result jsonb,
+  error text,
+  attempts int not null default 0,
+  max_attempts int not null default 3,
+  -- ... other tracking fields
+);
+```
+
+2. **Vector Storage**
+```sql
+-- Articles table includes vector fields
+create table kb_articles (
+  -- ... existing fields ...
+  title_embedding vector(1536),    -- For future semantic search
+  content_embedding vector(1536),   -- For future semantic search
+);
+
+-- Chunks table for detailed semantic search
+create table kb_article_chunks (
+  -- ... existing fields ...
+  embedding vector(1536),
+  metadata jsonb not null
 );
 ``` 
+
+### Best Practices
+
+1. **Row Level Security (RLS)**
+   - All tables have RLS enabled
+   - Policies based on organization membership
+   - Separate policies for read/write operations
+
+2. **Indexing**
+   - B-tree indexes on foreign keys and lookup fields
+   - GiST indexes for full-text search
+   - IVF-FLAT indexes for future vector similarity search
+
+3. **Data Integrity**
+   - Foreign key constraints
+   - Check constraints for enums
+   - Triggers for automated updates 

@@ -1,129 +1,97 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import { Edit, ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Edit } from 'lucide-react';
 import PropTypes from 'prop-types';
 
-export default function WorkflowDetail({ id, onBack, onEdit }) {
+export default function WorkflowDetail({ id, onBack, onEdit, profile }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [workflow, setWorkflow] = useState(null);
   const [stages, setStages] = useState([]);
 
   useEffect(() => {
-    fetchWorkflow();
+    fetchWorkflowDetails();
   }, [id]);
 
-  async function fetchWorkflow() {
+  async function fetchWorkflowDetails() {
     try {
-      console.log('Fetching workflow with ID:', id);
-      
-      // Fetch workflow details
+      // Fetch workflow details using get_workflow_by_id RPC
       const { data: workflowData, error: workflowError } = await supabase
-        .from('workflows')
-        .select('*')
-        .eq('id', id)
-        .single();
+        .rpc('get_workflow_by_id', { workflow_uuid: id });
 
-      if (workflowError) {
-        console.error('Error fetching workflow:', workflowError);
-        throw workflowError;
-      }
-      console.log('Workflow data:', workflowData);
+      if (workflowError) throw workflowError;
       setWorkflow(workflowData);
 
-      // Fetch stages
-      console.log('Fetching stages for workflow:', id);
+      // Fetch stages using get_workflow_stages RPC
       const { data: stagesData, error: stagesError } = await supabase
-        .from('workflow_stages')
-        .select('*')
-        .eq('workflow_id', id)
-        .order('created_at');
+        .rpc('get_workflow_stages', { workflow_uuid: id });
 
-      if (stagesError) {
-        console.error('Error fetching stages:', stagesError);
-        throw stagesError;
-      }
-      console.log('Stages data:', stagesData);
-      
-      if (stagesData && Array.isArray(stagesData)) {
-        setStages(stagesData);
-      }
+      if (stagesError) throw stagesError;
+      setStages(stagesData || []);
     } catch (err) {
-      console.error('Error in fetchWorkflow:', err);
-      setError('Error loading workflow');
+      console.error('Error fetching workflow details:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   }
 
-  if (loading) return <div>Loading workflow details...</div>;
+  if (loading) return <div>Loading...</div>;
   if (error) return <div className="text-red-500">{error}</div>;
   if (!workflow) return <div>Workflow not found</div>;
 
   return (
-    <div className="p-4 max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={onBack}
-            className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-all"
-            title="Back to workflows"
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <h1 className="text-2xl font-bold">{workflow.name}</h1>
-        </div>
+        <button
+          onClick={onBack}
+          className="flex items-center text-gray-600 hover:text-gray-900"
+        >
+          <ArrowLeft className="w-5 h-5 mr-2" />
+          Back to Workflows
+        </button>
         <button
           onClick={() => onEdit(id)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all"
+          className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
         >
-          <Edit size={16} />
+          <Edit className="w-4 h-4 mr-2" />
           Edit Workflow
         </button>
       </div>
 
-      {/* Workflow Info */}
-      <div className="mb-8">
-        <p className="text-gray-600">{workflow.description}</p>
-        <div className="mt-2">
-          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-            workflow.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-          }`}>
-            {workflow.is_active ? 'Active' : 'Inactive'}
-          </span>
+      {/* Workflow Details */}
+      <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+        <h1 className="text-2xl font-bold mb-2">{workflow.name}</h1>
+        <p className="text-gray-600 mb-4">{workflow.description || 'No description'}</p>
+        <div className="text-sm text-gray-500">
+          <p>Created: {new Date(workflow.created_at).toLocaleString()}</p>
+          <p>Last Updated: {new Date(workflow.updated_at).toLocaleString()}</p>
+          <p>Status: {workflow.is_active ? 'Active' : 'Inactive'}</p>
         </div>
       </div>
 
       {/* Stages */}
-      <div className="space-y-4">
-        <h2 className="text-lg font-semibold">Workflow Stages</h2>
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <h2 className="text-xl font-semibold mb-4">Workflow Stages</h2>
         <div className="space-y-4">
           {stages.map((stage, index) => (
-            <div 
+            <div
               key={stage.id}
-              className="bg-white p-4 rounded-lg shadow-sm border border-gray-200"
+              className="border rounded-lg p-4 relative"
             >
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-medium text-lg">{stage.name}</h3>
-                  <p className="text-gray-600 mt-1">{stage.description}</p>
-                  <div className="flex gap-2 mt-2">
-                    {stage.is_start && (
-                      <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-sm">
-                        Start
-                      </span>
-                    )}
-                    {stage.is_end && (
-                      <span className="bg-red-100 text-red-800 px-2 py-1 rounded text-sm">
-                        End
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="text-sm text-gray-500">
-                  Stage {index + 1} of {stages.length}
-                </div>
+              <div className="absolute -left-3 top-1/2 transform -translate-y-1/2 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm">
+                {index + 1}
+              </div>
+              <h3 className="font-medium mb-2">{stage.name}</h3>
+              <p className="text-gray-600 text-sm">{stage.description || 'No description'}</p>
+              <div className="mt-2 flex gap-2">
+                {stage.is_start && (
+                  <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded">Start</span>
+                )}
+                {stage.is_end && (
+                  <span className="px-2 py-1 bg-red-100 text-red-800 text-xs rounded">End</span>
+                )}
               </div>
             </div>
           ))}
@@ -136,5 +104,6 @@ export default function WorkflowDetail({ id, onBack, onEdit }) {
 WorkflowDetail.propTypes = {
   id: PropTypes.string.isRequired,
   onBack: PropTypes.func.isRequired,
-  onEdit: PropTypes.func.isRequired
+  onEdit: PropTypes.func.isRequired,
+  profile: PropTypes.object.isRequired
 }; 

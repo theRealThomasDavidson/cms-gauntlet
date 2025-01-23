@@ -1,5 +1,5 @@
 import { LogOut } from "lucide-react"
-import { supabase } from '../supabaseClient'
+import { supabase } from '@/lib/supabaseClient'
 import { useNavigate } from 'react-router-dom'
 import './TopBar.css'
 

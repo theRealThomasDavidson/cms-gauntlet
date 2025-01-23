@@ -15,7 +15,8 @@ export default function Workspace({
   onCreateWorkflow,
   onEditWorkflow,
   onViewWorkflow,
-  onWorkflowAction 
+  onWorkflowAction,
+  profile 
 }) {
   const renderComponent = () => {
     return (
@@ -27,17 +28,20 @@ export default function Workspace({
                 onCreateWorkflow={onCreateWorkflow} 
                 onEditWorkflow={onEditWorkflow}
                 onViewWorkflow={onViewWorkflow}
+                profile={profile}
               />
             )}
             {workflowState.view === 'new' && (
               <WorkflowForm 
-                onCancel={() => onWorkflowAction('list')} 
+                onCancel={() => onWorkflowAction('list')}
+                profile={profile}
               />
             )}
             {workflowState.view === 'edit' && (
               <WorkflowForm 
                 id={workflowState.id} 
-                onCancel={() => onWorkflowAction('list')} 
+                onCancel={() => onWorkflowAction('list')}
+                profile={profile}
               />
             )}
             {workflowState.view === 'detail' && (
@@ -45,13 +49,14 @@ export default function Workspace({
                 id={workflowState.id} 
                 onBack={() => onWorkflowAction('list')}
                 onEdit={onEditWorkflow}
+                profile={profile}
               />
             )}
           </>
         )}
-        {activeComponent === 'dashboard' && <Dashboard />}
-        {activeComponent === 'tickets' && <Tickets />}
-        {activeComponent === 'knowledge' && <Knowledge />}
+        {activeComponent === 'dashboard' && <Dashboard profile={profile} />}
+        {activeComponent === 'tickets' && <Tickets profile={profile} />}
+        {activeComponent === 'knowledge' && <Knowledge profile={profile} />}
         {activeComponent === 'profile' && <Profile />}
       </Suspense>
     )
@@ -85,5 +90,8 @@ Workspace.propTypes = {
   onCreateWorkflow: PropTypes.func.isRequired,
   onEditWorkflow: PropTypes.func.isRequired,
   onViewWorkflow: PropTypes.func.isRequired,
-  onWorkflowAction: PropTypes.func.isRequired
+  onWorkflowAction: PropTypes.func.isRequired,
+  profile: PropTypes.shape({
+    // Add appropriate prop types for the profile shape
+  })
 } 

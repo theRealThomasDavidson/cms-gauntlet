@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '../../lib/supabaseClient'
+import { supabase, getVisibleProfiles } from '@/lib/supabaseClient'
+import { profiles } from '@/lib/api'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -45,64 +46,30 @@ export default function ProfileView() {
 
   const loadProfile = async () => {
     try {
+      setLoading(true)
+      setError(null)
+
+      // Get current user
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No user found')
 
-      // Get user's profile
-      let { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('auth_id', user.id)
-        .single()
+      // Get visible profiles using our new function
+      const profiles = await getVisibleProfiles()
+      
+      // First profile is always the current user
+      const currentProfile = profiles[0]
+      setProfile(currentProfile)
+      
+      // Set isAdmin based on the user's role
+      setIsAdmin(currentProfile.role === 'admin')
+      setAllProfiles(profiles)
 
-      // If no profile exists, create one with default values
-      if (profileError && (profileError.message.includes('returned no rows') || profileError.code === 'PGRST116')) {
-        const { data: newProfile, error: createError } = await supabase
-          .from('profiles')
-          .insert([
-            {
-              auth_id: user.id,
-              email: user.email,
-              username: user.email,  // Default to email
-              name: user.email,      // Default to email
-              preferences: {
-                notifications: true,
-                theme: 'light'
-              }
-            }
-          ])
-          .select()
-          .single()
-
-        if (createError) throw createError
-        profile = newProfile
-        setIsFirstSignIn(true)  // Trigger first-time setup
-        setInitialSetupForm({
-          username: user.email.split('@')[0],  // Default username from email
-          name: '',
-          email: user.email
-        })
-      } else if (profileError) {
-        throw profileError
-      } else if (profile.username === profile.email || profile.name === profile.email) {
-        // If username or name matches email, also consider it first sign in
-        setIsFirstSignIn(true)
-        setInitialSetupForm({
-          username: user.email.split('@')[0],
-          name: '',
-          email: user.email
-        })
-      }
-
-      setProfile(profile)
-      setIsAdmin(profile.role === 'admin')
-
-      // If admin, load paginated profiles
-      if (profile.role === 'admin') {
-        await loadProfiles()
-      }
-    } catch (err) {
-      setError(err.message)
+      // Calculate pagination
+      setTotalPages(Math.ceil(profiles.length / ITEMS_PER_PAGE))
+      
+    } catch (error) {
+      console.error('Error loading profile:', error)
+      setError(error.message)
     } finally {
       setLoading(false)
     }
@@ -110,27 +77,32 @@ export default function ProfileView() {
 
   const loadProfiles = async () => {
     try {
-      let query = supabase
-        .from('profiles')
-        .select('*', { count: 'exact' })
-
-      // Add search if query exists
+      // Get all visible profiles using our RPC function
+      const profiles = await getVisibleProfiles()
+      
+      // Filter profiles if search query exists
+      let filteredProfiles = profiles
       if (searchQuery) {
-        query = query.or(`username.ilike.%${searchQuery}%,name.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`)
+        const searchLower = searchQuery.toLowerCase()
+        filteredProfiles = profiles.filter(profile => 
+          profile.username?.toLowerCase().includes(searchLower) ||
+          profile.name?.toLowerCase().includes(searchLower) ||
+          profile.email?.toLowerCase().includes(searchLower)
+        )
       }
 
-      // Get total count first
-      const { count } = await query
-      setTotalPages(Math.ceil(count / ITEMS_PER_PAGE))
+      // Calculate pagination
+      setTotalPages(Math.ceil(filteredProfiles.length / ITEMS_PER_PAGE))
 
-      // Then get paginated results
-      const { data: profiles, error } = await query
-        .order('created_at', { ascending: false })
-        .range(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE - 1)
+      // Get paginated results
+      const paginatedProfiles = filteredProfiles.slice(
+        page * ITEMS_PER_PAGE, 
+        (page + 1) * ITEMS_PER_PAGE
+      )
 
-      if (error) throw error
-      setAllProfiles(profiles)
+      setAllProfiles(paginatedProfiles)
     } catch (err) {
+      console.error('Error loading profiles:', err)
       setError(err.message)
     }
   }
@@ -185,14 +157,11 @@ export default function ProfileView() {
 
   const handleSaveEdit = async (profileId) => {
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          username: editForm.username,
-          name: editForm.name,
-          email: editForm.email
-        })
-        .eq('id', profileId)
+      const { error } = await profiles.update(profileId, {
+        username: editForm.username,
+        name: editForm.name,
+        email: editForm.email
+      })
 
       if (error) throw error
       
@@ -247,23 +216,32 @@ export default function ProfileView() {
 
   const handleDeleteUser = async (profileId, email) => {
     try {
-      // Check if user is deleting themselves
-      const { data: { user } } = await supabase.auth.getUser()
-      const isSelfDelete = user.email === email
+      console.log('Starting user deletion process for:', email);
 
-      // Call the delete_user function
-      const { data, error } = await supabase.rpc('delete_user', {
-        target_email: email
+      // First delete the profile using our RPC function
+      const { data, error: profileError } = await supabase.rpc('delete_user', {
+        email_to_delete: email
       })
+      if (profileError) throw profileError
+      console.log('Profile deletion raw response:', data);
+      console.log('Profile deletion response type:', typeof data);
+      console.log('Profile deletion response stringified:', JSON.stringify(data));
 
-      if (error) throw error
-      if (!data.success) throw new Error(data.message)
+      if (!data?.auth_id) {
+        console.error('Missing auth_id in response. Full response:', data);
+        throw new Error('No auth_id returned from profile deletion')
+      }
 
-      // Show success message
-      setError(null)
-      
-      if (isSelfDelete) {
-        // If deleting self, sign out and redirect
+      // Call our edge function to delete the auth user
+      console.log('Calling edge function with auth_id:', data.auth_id);
+      const { data: deleteData, error: deleteError } = await supabase.functions.invoke('delete-user', {
+        body: { user_id: data.auth_id }
+      })
+      if (deleteError) throw deleteError
+      console.log('Edge function response:', deleteData);
+
+      // If deleting self, sign out and redirect
+      if (profile.email === email) {
         await supabase.auth.signOut()
         window.location.href = '/login'
       } else {
@@ -273,6 +251,7 @@ export default function ProfileView() {
 
       setDeleteConfirm(null)
     } catch (err) {
+      console.error('Error in handleDeleteUser:', err);
       setError(err.message)
     }
   }
@@ -336,45 +315,14 @@ export default function ProfileView() {
               {isExpanded ? 'Collapse' : 'Expand'}
             </Button>
             {!isEditing && (
-              <>
-                {deleteConfirm === p.id ? (
-                  <>
-                    <Button 
-                      onClick={() => handleDeleteUser(p.id, p.email)}
-                      variant="destructive"
-                      size="sm"
-                    >
-                      Confirm Delete
-                    </Button>
-                    <Button 
-                      onClick={() => setDeleteConfirm(null)}
-                      variant="outline"
-                      size="sm"
-                    >
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button 
-                      onClick={() => handleStartEdit(p)}
-                      variant="outline"
-                      size="sm"
-                    >
-                      <Pencil className="h-4 w-4 mr-1" />
-                      Edit
-                    </Button>
-                    <Button 
-                      onClick={() => setDeleteConfirm(p.id)}
-                      variant="outline"
-                      size="sm"
-                    >
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      Delete
-                    </Button>
-                  </>
-                )}
-              </>
+              <Button 
+                onClick={() => handleStartEdit(p)}
+                variant="outline"
+                size="sm"
+              >
+                <Pencil className="h-4 w-4 mr-1" />
+                Edit
+              </Button>
             )}
           </div>
         </div>
