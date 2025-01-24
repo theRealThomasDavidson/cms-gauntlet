@@ -203,69 +203,66 @@ export const tickets = {
   
   addComment: async ({ ticketId, content, isInternal = false }) => {
     return await supabase
-      .from('ticket_comments')
-      .insert({
-        ticket_id: ticketId,
-        content,
-        is_internal: isInternal
+      .rpc('create_comment', {
+        p_ticket_id: ticketId,
+        p_content: content,
+        p_is_internal: isInternal
       })
   },
   
   addAttachment: async ({ ticketId, fileName, fileType, fileSize, storagePath }) => {
     return await supabase
-      .from('ticket_attachments')
-      .insert({
-        ticket_id: ticketId,
-        file_name: fileName,
-        file_type: fileType,
-        file_size: fileSize,
-        storage_path: storagePath
+      .rpc('create_attachment', {
+        p_ticket_id: ticketId,
+        p_file_name: fileName,
+        p_file_type: fileType,
+        p_file_size: fileSize,
+        p_storage_path: storagePath
       })
   },
   
-  // Queries for getting tickets
-  getAgentTickets: async () => {
+  getAgentTickets: async (filters = {}) => {
     return await supabase
-      .from('agent_tickets')
-      .select('*')
+      .rpc('get_agent_tickets', {
+        p_org_id: filters.orgId,
+        p_priority: filters.priority,
+        p_assigned_to: filters.assignedTo,
+        p_stage_id: filters.stageId
+      })
   },
   
   getCustomerTickets: async () => {
     return await supabase
-      .from('customer_tickets')
-      .select('*')
+      .rpc('get_customer_tickets')
   },
   
   getTicketDetails: async (ticketId) => {
     return await supabase
-      .from('ticket_details')
-      .select('*')
-      .eq('ticket_id', ticketId)
+      .rpc('get_ticket_details', {
+        p_ticket_id: ticketId
+      })
       .single()
   },
   
   getTicketHistory: async (ticketId) => {
     return await supabase
-      .from('ticket_history')
-      .select('*')
-      .eq('ticket_id', ticketId)
-      .order('changed_at', { ascending: false })
+      .rpc('get_ticket_history', {
+        p_ticket_id: ticketId
+      })
   },
   
   getTicketComments: async (ticketId) => {
     return await supabase
-      .from('ticket_comments')
-      .select('*')
-      .eq('ticket_id', ticketId)
-      .order('created_at', { ascending: true })
+      .rpc('get_ticket_comments', {
+        p_ticket_id: ticketId
+      })
   },
   
   getTicketAttachments: async (ticketId) => {
     return await supabase
-      .from('ticket_attachments')
-      .select('*')
-      .eq('ticket_id', ticketId)
-      .order('uploaded_at', { ascending: false })
+      .rpc('get_ticket_attachments', {
+        p_ticket_id: ticketId
+      })
   }
 }
 

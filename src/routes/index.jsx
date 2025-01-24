@@ -11,6 +11,12 @@ export const router = createBrowserRouter([
         <Dashboard />
       </ProtectedRoute>
     ),
+    children: [
+      {
+        path: 'workflows/:id/kanban',
+        element: <Dashboard />
+      }
+    ]
   },
   {
     path: '/login',

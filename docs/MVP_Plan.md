@@ -9,40 +9,100 @@
   - [x] Stage listing and organization
   - [x] Stage name editing
   - [x] Stage description as textarea
-  - [x] Move up/down controls
   - [x] Delete stage functionality
-  - [x] Hooks button placeholder
-  - [x] Visual pink box styling
+  - [x] Stage notification configuration
+  - [x] Visual styling
   - [x] Add stage form with validation
-- [x] Ticket System Foundation:
-  - [x] Database schema for tickets, history, comments, attachments
-  - [x] Service layer API functions
-  - [x] Pagination and filtering support
-  - [x] File attachment handling
-  - [x] Comment system with internal/external separation
+- [x] Workflow Management:
+  - [x] Database schema for workflows and stages
+  - [x] RPC functions with proper permissions
+  - [x] Stage notification system
+  - [x] Linked list structure for stages
 
 ### In Progress
-- [x] Database Structure:
-  - [x] Workflows table created
-  - [x] Workflow stages table created
-  - [x] Tickets and related tables created
-  - [ ] Database views implementation
-  - [ ] RLS policies missing
-  - [ ] Role system not configured
+- [ ] Ticket System Integration:
+  - [x] Database schema for tickets, history, comments, attachments
+  - [x] Service layer API functions
+  - [ ] Connection to workflow stages
+  - [ ] UI implementation
+- [ ] Notification System:
+  - [x] Stage notification configuration
+  - [ ] In-app notifications
+  - [ ] Notification preferences
+  - [ ] Notification triggers
 
-### Blocking Issues
-- [ ] RLS policies preventing workflow save
-  - [ ] Cannot create new workflows
-  - [ ] Cannot update existing workflows
-  - [ ] Cannot manage stages
-- [ ] Role-based access not implemented
-  - [ ] No role column in profiles
-  - [ ] No role enum type
-  - [ ] No role-based policies
-- [ ] Stage transitions not configured
-  - [ ] No transition rules table
-  - [ ] No UI for managing transitions
-  - [ ] No validation logic
+## Next 2 Days Plan
+### Day 1: Ticket System Integration
+1. Morning: Ticket Core Features (9am-12pm)
+   - [ ] Connect tickets to workflows
+     - [ ] Add workflow_id and stage_id to tickets table
+     - [ ] Create RPC functions for ticket-workflow operations
+     - [ ] Implement stage transition validation
+   - [ ] Ticket Creation
+     - [ ] Create ticket form with workflow selection
+     - [ ] Initial stage assignment
+     - [ ] Basic ticket fields (title, description, priority)
+   - [ ] Ticket List View
+     - [ ] Basic list display with pagination
+     - [ ] Status/stage filtering
+     - [ ] Priority filtering
+     - [ ] Assignment filtering
+
+2. Afternoon: Ticket Management (1pm-5pm)
+   - [ ] Stage Transitions
+     - [ ] UI for changing ticket stages
+     - [ ] Transition validation
+     - [ ] History tracking for changes
+   - [ ] Comment System
+     - [ ] Internal comments for team
+     - [ ] External comments for customers
+     - [ ] Rich text editor integration
+   - [ ] File Attachments
+     - [ ] Upload interface
+     - [ ] File type validation
+     - [ ] Storage configuration
+
+### Day 2: Notifications & Enhancements
+1. Morning: Notification System (9am-12pm)
+   - [ ] In-App Notifications
+     - [ ] Notification table setup
+     - [ ] UI for displaying notifications
+     - [ ] Mark as read functionality
+   - [ ] Notification Triggers
+     - [ ] Ticket creation
+     - [ ] Stage changes
+     - [ ] Comment additions
+     - [ ] Assignment changes
+   - [ ] Notification Preferences
+     - [ ] Per-user settings
+     - [ ] Channel preferences (in-app, email)
+     - [ ] Frequency settings
+
+2. Afternoon: UI/UX Improvements (1pm-5pm)
+   - [ ] Loading States
+     - [ ] Skeleton loaders for lists
+     - [ ] Progress indicators for actions
+   - [ ] Error Handling
+     - [ ] Error boundaries
+     - [ ] User-friendly error messages
+     - [ ] Recovery actions
+   - [ ] Success/Error Toasts
+     - [ ] Action confirmation messages
+     - [ ] Error notifications
+   - [ ] Enhanced Filtering
+     - [ ] Combined filters
+     - [ ] Save filter preferences
+     - [ ] Quick filters
+
+## Success Criteria
+- [ ] Users can create and manage tickets
+- [ ] Tickets are properly associated with workflow stages
+- [ ] Stage transitions are tracked and validated
+- [ ] Comments and attachments work reliably
+- [ ] Notifications are triggered and delivered
+- [ ] UI is responsive and user-friendly
+- [ ] Error handling is robust
+- [ ] Performance is acceptable under load
 
 ## Tomorrow's Specific Tasks
 ### Morning

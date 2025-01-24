@@ -4,6 +4,7 @@ import PropTypes from 'prop-types'
 const WorkflowList = lazy(() => import('./Workflow/WorkflowList'))
 const WorkflowForm = lazy(() => import('./Workflow/WorkflowForm'))
 const WorkflowDetail = lazy(() => import('./Workflow/WorkflowDetail'))
+const KanbanBoard = lazy(() => import('./Workflow/KanbanBoard'))
 const Dashboard = lazy(() => import('./Dashboard/DashboardView'))
 const Tickets = lazy(() => import('./Tickets/TicketsView'))
 const Knowledge = lazy(() => import('./Knowledge/KnowledgeView'))
@@ -52,6 +53,12 @@ export default function Workspace({
                 profile={profile}
               />
             )}
+            {workflowState.view === 'kanban' && (
+              <KanbanBoard
+                workflowId={workflowState.id}
+                profile={profile}
+              />
+            )}
           </>
         )}
         {activeComponent === 'dashboard' && <Dashboard profile={profile} />}
@@ -84,7 +91,7 @@ export default function Workspace({
 Workspace.propTypes = {
   activeComponent: PropTypes.string.isRequired,
   workflowState: PropTypes.shape({
-    view: PropTypes.oneOf(['list', 'new', 'edit', 'detail']),
+    view: PropTypes.oneOf(['list', 'new', 'edit', 'detail', 'kanban']),
     id: PropTypes.string
   }),
   onCreateWorkflow: PropTypes.func.isRequired,

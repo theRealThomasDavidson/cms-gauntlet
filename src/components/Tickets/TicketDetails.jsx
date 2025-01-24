@@ -61,16 +61,16 @@ export default function TicketDetails({ ticketId }) {
     <div className="max-w-4xl mx-auto p-4">
       {/* Ticket Header */}
       <div className="bg-white rounded-lg shadow p-6 mb-6">
-        <h1 className="text-2xl font-bold mb-2">{ticket.ticket.latest_history.title}</h1>
+        <h1 className="text-2xl font-bold mb-2">{ticket.ticket.title}</h1>
         <div className="flex gap-4 text-sm text-gray-600 mb-4">
           <span>Created {new Date(ticket.ticket.created_at).toLocaleDateString()}</span>
           <span>•</span>
-          <span>Status: {ticket.ticket.current_stage.name}</span>
+          <span>Status: {ticket.ticket.stage_name || 'No Stage'}</span>
           <span>•</span>
-          <span>Priority: {ticket.ticket.latest_history.priority}</span>
+          <span>Priority: {ticket.ticket.priority}</span>
         </div>
         <p className="text-gray-700 whitespace-pre-wrap">
-          {ticket.ticket.latest_history.description}
+          {ticket.ticket.description}
         </p>
       </div>
 
@@ -115,7 +115,7 @@ export default function TicketDetails({ ticketId }) {
                     </span>
                   </div>
                   <div className="text-sm text-gray-600">
-                    {Object.entries(item.changes.fields).map(([field, value]) => (
+                    {Object.entries(item.changes || {}).map(([field, value]) => (
                       <p key={field}>
                         Updated {field}: {value.toString()}
                       </p>
@@ -142,7 +142,7 @@ export default function TicketDetails({ ticketId }) {
             <input
               type="checkbox"
               checked={isInternalComment}
-              onChange={e => setIsInternalComment(e.target.checked)}
+              onChange={e => setIsInternalComment(e.checked)}
             />
             <span className="text-sm text-gray-700">Internal comment</span>
           </label>
