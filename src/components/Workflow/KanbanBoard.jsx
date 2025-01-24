@@ -84,11 +84,13 @@ export default function KanbanBoard({ workflowId, profile }) {
 
       if (updateError) throw updateError;
 
-      // Update the stage separately
+      // Update the stage using RPC function
       const { error: stageError } = await supabase
-        .from('tickets')
-        .update({ current_stage_id: pendingTransition.newStageId })
-        .eq('id', pendingTransition.ticketId);
+        .rpc('update_ticket_stage', {
+          p_ticket_id: pendingTransition.ticketId,
+          p_stage_id: pendingTransition.newStageId,
+          p_change_reason: comment || 'Stage changed'
+        });
 
       if (stageError) throw stageError;
 
@@ -150,6 +152,9 @@ export default function KanbanBoard({ workflowId, profile }) {
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex-grow">
                         <div className="text-sm font-medium">{ticket.title}</div>
+                        {ticket.description && (
+                          <div className="text-xs text-gray-600 mt-1 line-clamp-2">{ticket.description}</div>
+                        )}
                         <div className="text-xs text-gray-500 mt-1">
                           {ticket.priority && (
                             <span className="mr-2">Priority: {ticket.priority}</span>
