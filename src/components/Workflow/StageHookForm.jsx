@@ -48,44 +48,6 @@ export default function StageHookForm({ stageId, hook = null, onSave, onCancel, 
     }
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      const hookPayload = {
-        p_stage_id: stageId,
-        p_hook_type: hookData.type,
-        p_config: hookData.config,
-        p_is_active: hookData.is_active
-      };
-
-      let result;
-      if (hook?.id) {
-        result = await supabase
-          .from('workflow_stage_hooks')
-          .update({
-            hook_type: hookData.type,
-            config: hookData.config,
-            is_active: hookData.is_active
-          })
-          .eq('id', hook.id);
-      } else {
-        result = await supabase
-          .rpc('create_workflow_stage_hook', hookPayload);
-      }
-
-      if (result.error) throw result.error;
-      onSave();
-    } catch (err) {
-      setError('Error saving hook');
-      console.error('Error:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function handleConfigChange(key, value) {
     setHookData(prev => ({
       ...prev,
@@ -96,8 +58,42 @@ export default function StageHookForm({ stageId, hook = null, onSave, onCancel, 
     }));
   }
 
+  const handleSaveHook = async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      // Create the hook directly without template
+      const { data: hook, error: hookError } = await supabase
+        .rpc('create_workflow_stage_hook', {
+          p_stage_id: stageId,
+          p_hook_type: 'notification',
+          p_config: {
+            target_type: hookData.config.target_type,
+            target_user_id: hookData.config.target_type === 'specific_user' ? hookData.config.target_user_id : null,
+            target_role: hookData.config.target_type === 'role' ? hookData.config.target_role : null,
+            message: hookData.config.message
+          },
+          p_is_active: true
+        });
+
+      if (hookError) {
+        console.error('Hook Error:', hookError);
+        throw hookError;
+      }
+
+      console.log('Created hook:', hook);
+      onSave();
+    } catch (err) {
+      console.error('Error saving hook:', err);
+      setError('Failed to save notification: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="space-y-4">
       <div>
         <label className="block text-sm font-medium text-gray-700">
           Notification Target
@@ -186,8 +182,9 @@ export default function StageHookForm({ stageId, hook = null, onSave, onCancel, 
 
       <div className="flex gap-4">
         <button
-          type="submit"
+          type="button"
           disabled={loading}
+          onClick={handleSaveHook}
           className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50"
         >
           {loading ? 'Saving...' : 'Save Hook'}
@@ -200,7 +197,7 @@ export default function StageHookForm({ stageId, hook = null, onSave, onCancel, 
           Cancel
         </button>
       </div>
-    </form>
+    </div>
   );
 }
 

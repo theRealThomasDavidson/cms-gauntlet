@@ -9,14 +9,19 @@ const Dashboard = lazy(() => import('./Dashboard/DashboardView'))
 const Tickets = lazy(() => import('./Tickets/TicketsView'))
 const Knowledge = lazy(() => import('./Knowledge/KnowledgeView'))
 const Profile = lazy(() => import('./Dashboard/ProfileView'))
+const NotificationCenter = lazy(() => import('./Notifications/NotificationCenter'))
+const TicketDetail = lazy(() => import('./Tickets/TicketDetail'))
 
 export default function Workspace({ 
   activeComponent, 
-  workflowState = { view: 'list', id: null }, 
+  workflowState = { view: 'list', id: null },
+  ticketId = null,
   onCreateWorkflow,
   onEditWorkflow,
   onViewWorkflow,
   onWorkflowAction,
+  onBackToTickets,
+  onViewTicket,
   profile 
 }) {
   const renderComponent = () => {
@@ -62,9 +67,21 @@ export default function Workspace({
           </>
         )}
         {activeComponent === 'dashboard' && <Dashboard profile={profile} />}
-        {activeComponent === 'tickets' && <Tickets profile={profile} />}
+        {activeComponent === 'tickets' && (
+          ticketId ? (
+            <TicketDetail 
+              ticketId={ticketId} 
+              onBack={onBackToTickets}
+            />
+          ) : (
+            <Tickets profile={profile} />
+          )
+        )}
         {activeComponent === 'knowledge' && <Knowledge profile={profile} />}
         {activeComponent === 'profile' && <Profile />}
+        {activeComponent === 'notifications' && (
+          <NotificationCenter onViewTicket={onViewTicket} />
+        )}
       </Suspense>
     )
   }
@@ -94,10 +111,13 @@ Workspace.propTypes = {
     view: PropTypes.oneOf(['list', 'new', 'edit', 'detail', 'kanban']),
     id: PropTypes.string
   }),
+  ticketId: PropTypes.string,
   onCreateWorkflow: PropTypes.func.isRequired,
   onEditWorkflow: PropTypes.func.isRequired,
   onViewWorkflow: PropTypes.func.isRequired,
   onWorkflowAction: PropTypes.func.isRequired,
+  onBackToTickets: PropTypes.func.isRequired,
+  onViewTicket: PropTypes.func.isRequired,
   profile: PropTypes.shape({
     // Add appropriate prop types for the profile shape
   })

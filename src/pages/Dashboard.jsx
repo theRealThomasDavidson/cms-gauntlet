@@ -12,6 +12,7 @@ export default function Dashboard() {
   const [workflowState, setWorkflowState] = useState({ view: 'list', id: null })
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [ticketId, setTicketId] = useState(null);
 
   useEffect(() => {
     loadProfile()
@@ -27,6 +28,19 @@ export default function Dashboard() {
       setWorkflowState({ view: 'kanban', id: workflowId });
     }
   }, [location]);
+
+  useEffect(() => {
+    const path = location.pathname;
+    const ticketMatch = path.match(/^\/tickets\/([^/]+)$/);
+    
+    if (ticketMatch) {
+      const id = ticketMatch[1];
+      setActiveComponent('tickets');
+      setTicketId(id);
+      // Just navigate to root with hash
+      navigate('/', { replace: true });
+    }
+  }, [location, navigate]);
 
   const loadProfile = async () => {
     try {
@@ -60,6 +74,19 @@ export default function Dashboard() {
     setWorkflowState({ view, id })
   }
 
+  const handleViewTicket = (id) => {
+    setActiveComponent('tickets');
+    setTicketId(id);
+    // Just navigate to root with hash
+    navigate('/', { replace: true });
+  };
+
+  const handleBackToTickets = () => {
+    setTicketId(null);
+    setActiveComponent('tickets');
+    navigate('/', { replace: true });
+  };
+
   if (loading) return <div>Loading...</div>
 
   return (
@@ -75,10 +102,13 @@ export default function Dashboard() {
         <Workspace 
           activeComponent={activeComponent} 
           workflowState={workflowState}
+          ticketId={ticketId}
           onCreateWorkflow={handleCreateWorkflow}
           onEditWorkflow={handleEditWorkflow}
           onViewWorkflow={handleViewWorkflow}
           onWorkflowAction={handleWorkflowAction}
+          onBackToTickets={handleBackToTickets}
+          onViewTicket={handleViewTicket}
           profile={profile}
         />
       </div>

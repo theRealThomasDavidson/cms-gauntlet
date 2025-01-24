@@ -5,9 +5,13 @@ import AssignWorkflowModal from './AssignWorkflowModal';
 import AssignedUserDisplay from './AssignedUserDisplay';
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
+import TicketDetail from './TicketDetail';
 
 export default function TicketsView({ profile }) {
   const navigate = useNavigate();
+  console.log('Current profile:', profile);
+  console.log('User role:', profile?.role);
+  
   const [unassignedTickets, setUnassignedTickets] = useState([]);
   const [workflows, setWorkflows] = useState([]);
   const [workflowTickets, setWorkflowTickets] = useState({});
@@ -16,6 +20,7 @@ export default function TicketsView({ profile }) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [showWorkflowModal, setShowWorkflowModal] = useState(false);
+  const [selectedTicketId, setSelectedTicketId] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -120,7 +125,7 @@ export default function TicketsView({ profile }) {
             </button>
           )}
           <button
-            onClick={() => navigate(`/tickets/${ticket.id}`)}
+            onClick={() => setSelectedTicketId(ticket.id)}
             className="p-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
             title="View ticket details"
           >
@@ -131,6 +136,15 @@ export default function TicketsView({ profile }) {
     ));
   }
 
+  if (selectedTicketId) {
+    return (
+      <TicketDetail 
+        ticketId={selectedTicketId} 
+        onBack={() => setSelectedTicketId(null)}
+      />
+    );
+  }
+
   if (loading) return <div>Loading tickets...</div>;
   if (error) return <div>Error: {error}</div>;
 
@@ -138,7 +152,8 @@ export default function TicketsView({ profile }) {
     <div className="p-4">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Tickets</h1>
-        {(profile.role === 'admin' || profile.role === 'agent') && (
+        
+        <div className="flex items-center gap-4">
           <button
             onClick={() => setShowCreateForm(true)}
             className="flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold shadow-lg hover:bg-blue-700 transition-all"
@@ -146,7 +161,7 @@ export default function TicketsView({ profile }) {
             <Plus size={20} />
             New Ticket
           </button>
-        )}
+        </div>
       </div>
 
       {showCreateForm && (
@@ -173,7 +188,9 @@ export default function TicketsView({ profile }) {
       )}
 
       {/* Workflow Sections */}
-      {workflows.map(workflow => (
+      {
+      (profile.role === 'admin' || profile.role === 'agent') &&
+        workflows.map(workflow => (
         <div key={workflow.id} className="mb-8 border border-gray-200 rounded-lg p-6 bg-white shadow-sm">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">{workflow.name}</h2>

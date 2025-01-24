@@ -20,7 +20,7 @@ create index organizations_name_idx on organizations(name);
 -- Allow the function to create organizations
 create policy "allow function to create organizations"
   on organizations for insert
-  using (true);
+  with check (true);
 
 -- Allow authenticated users to view organizations
 create policy "authenticated users can view organizations"

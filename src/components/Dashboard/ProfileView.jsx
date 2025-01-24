@@ -157,11 +157,14 @@ export default function ProfileView() {
 
   const handleSaveEdit = async (profileId) => {
     try {
-      const { error } = await profiles.update(profileId, {
-        username: editForm.username,
-        name: editForm.name,
-        email: editForm.email
-      })
+      // Only update the allowed fields
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          username: editForm.username,
+          name: editForm.name,
+        })
+        .eq('id', profileId)
 
       if (error) throw error
       
@@ -186,7 +189,7 @@ export default function ProfileView() {
 
       if (authError) throw authError
 
-      // Then create their profile
+      // Then create their profile with only allowed fields
       const { error: profileError } = await supabase
         .from('profiles')
         .insert([
@@ -194,7 +197,8 @@ export default function ProfileView() {
             auth_id: authData.user.id,
             email: createForm.email,
             username: createForm.username,
-            name: createForm.name
+            name: createForm.name,
+            role: 'customer' // Set default role
           }
         ])
 
