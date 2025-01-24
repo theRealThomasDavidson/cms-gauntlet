@@ -6,6 +6,7 @@ drop function if exists is_admin() cascade;
 drop trigger if exists on_auth_user_created on auth.users;
 drop table if exists profiles cascade;
 drop type if exists user_role cascade;
+DROP FUNCTION if exists get_profile_by_id(uuid);
 
 -- Create user role enum
 create type user_role as enum ('customer', 'agent', 'admin');

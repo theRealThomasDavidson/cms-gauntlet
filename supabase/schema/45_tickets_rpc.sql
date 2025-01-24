@@ -358,7 +358,8 @@ begin
   -- Update ticket
   update tickets 
   set current_stage_id = p_stage_id,
-      latest_history_id = v_new_history_id
+      latest_history_id = v_new_history_id,
+      stage_changed_at = now()  -- Added this to track when stage changes
   where id = p_ticket_id;
 
   return v_new_history_id;
