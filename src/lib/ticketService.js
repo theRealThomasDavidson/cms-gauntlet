@@ -15,56 +15,66 @@ export async function fetchTickets({
   const { data: profile } = await supabase.auth.getUser()
   if (!profile?.user) return { data: null, error: 'Not authenticated' }
 
-  // Use the appropriate view based on user role
+  // Get user profile to determine role
   const { data: userProfile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('auth_id', profile.user.id)
+    .rpc('get_profile_by_auth_id', {
+      p_auth_id: profile.user.id
+    })
     .single()
 
-  let query = null
+  let data, error, count
 
   if (userProfile?.role === 'admin' || userProfile?.role === 'agent') {
-    query = supabase
-      .from('agent_tickets')
-      .select('*', { count: 'exact' })
+    // Use get_agent_tickets RPC
+    const result = await supabase
+      .rpc('get_agent_tickets', {
+        p_org_id: userProfile.org_id,
+        p_priority: priority,
+        p_assigned_to: assignedTo,
+        p_stage_id: stageId
+      })
+
+    data = result.data
+    error = result.error
+    count = data?.length || 0
   } else {
-    query = supabase
-      .from('customer_tickets')
-      .select('*', { count: 'exact' })
+    // Use get_customer_tickets RPC
+    const result = await supabase
+      .rpc('get_customer_tickets')
+
+    data = result.data
+    error = result.error
+    count = data?.length || 0
   }
 
-  // Apply filters
-  if (priority) {
-    query = query.eq('priority', priority)
-  }
-  if (stageId) {
-    query = query.eq('current_stage_id', stageId)
-  }
-  if (workflowId === null) {
-    query = query.is('workflow_id', null)
-  } else if (workflowId) {
-    query = query.eq('workflow_id', workflowId)
-  }
-  if (assignedTo) {
-    query = query.eq('assigned_to', assignedTo)
-  }
-  if (searchQuery) {
-    query = query.or(`title.ilike.%${searchQuery}%,description.ilike.%${searchQuery}%`)
+  // Apply search filter client-side if needed
+  if (searchQuery && data) {
+    data = data.filter(ticket => 
+      ticket.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      ticket.description?.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+    count = data.length
   }
 
-  // Apply sorting
-  query = query.order(sortBy, { ascending: sortDirection === 'asc' })
+  // Apply sorting client-side
+  if (data) {
+    data.sort((a, b) => {
+      const aVal = a[sortBy]
+      const bVal = b[sortBy]
+      const modifier = sortDirection === 'asc' ? 1 : -1
+      if (aVal < bVal) return -1 * modifier
+      if (aVal > bVal) return 1 * modifier
+      return 0
+    })
+  }
 
-  // Apply pagination
+  // Apply pagination client-side
   const start = (page - 1) * pageSize
-  const end = start + pageSize - 1
-  query = query.range(start, end)
-
-  const { data, error, count } = await query
+  const end = start + pageSize
+  const paginatedData = data?.slice(start, end)
 
   return { 
-    data, 
+    data: paginatedData, 
     error,
     pagination: {
       page,
@@ -75,7 +85,7 @@ export async function fetchTickets({
   }
 }
 
-// Direct fetch tickets without using views
+// Direct fetch tickets using RPC
 export async function fetchTicketsDirect({ 
   page = 1, 
   pageSize = 20
@@ -83,33 +93,35 @@ export async function fetchTicketsDirect({
   const { data: profile } = await supabase.auth.getUser()
   if (!profile?.user) return { data: null, error: 'Not authenticated' }
 
-  // Calculate pagination
+  // Get user profile
+  const { data: userProfile } = await supabase
+    .rpc('get_profile_by_auth_id', {
+      p_auth_id: profile.user.id
+    })
+    .single()
+
+  // Use get_agent_tickets or get_customer_tickets based on role
+  let result
+  if (userProfile?.role === 'admin' || userProfile?.role === 'agent') {
+    result = await supabase
+      .rpc('get_agent_tickets', {
+        p_org_id: userProfile.org_id
+      })
+  } else {
+    result = await supabase
+      .rpc('get_customer_tickets')
+  }
+
+  const { data, error } = result
+  const count = data?.length || 0
+
+  // Apply pagination client-side
   const start = (page - 1) * pageSize
-  const end = start + pageSize - 1
-
-  const { data, error, count } = await supabase
-    .from('tickets')
-    .select(`
-      *,
-      latest_history:ticket_history!fk_latest_history (
-        title,
-        description,
-        priority
-      )
-    `, { count: 'exact' })
-    .order('updated_at', { ascending: false })
-    .range(start, end)
-
-  // Transform the data to flatten the structure
-  const transformedData = data?.map(ticket => ({
-    ...ticket,
-    title: ticket.latest_history?.title,
-    description: ticket.latest_history?.description,
-    priority: ticket.latest_history?.priority
-  })) || [];
+  const end = start + pageSize
+  const paginatedData = data?.slice(start, end)
 
   return { 
-    data: transformedData, 
+    data: paginatedData, 
     error,
     pagination: {
       page,
@@ -123,54 +135,26 @@ export async function fetchTicketsDirect({
 // Fetch a single ticket with its full history and comments
 export async function fetchTicketDetails(ticketId) {
   const [ticketResult, historyResult, commentsResult, attachmentsResult] = await Promise.all([
-    // Get latest ticket state
     supabase
-      .from('tickets')
-      .select(`
-        *,
-        current_stage:workflow_stages!tickets_current_stage_id_fkey(name),
-        workflow:workflows(name),
-        latest_history:ticket_history!tickets_latest_history_id_fkey(
-          title,
-          description,
-          priority,
-          assigned_to,
-          assigned_user:profiles!ticket_history_assigned_to_fkey(name)
-        )
-      `)
-      .eq('id', ticketId)
+      .rpc('get_ticket_by_id', {
+        p_ticket_id: ticketId
+      })
       .single(),
 
-    // Get full history chain
     supabase
-      .from('ticket_history')
-      .select(`
-        *,
-        changed_by_user:profiles!ticket_history_changed_by_fkey(name),
-        stage:workflow_stages!ticket_history_workflow_stage_id_fkey(name)
-      `)
-      .eq('ticket_id', ticketId)
-      .order('changed_at', { ascending: false }),
+      .rpc('get_ticket_history', {
+        p_ticket_id: ticketId
+      }),
 
-    // Get comments
     supabase
-      .from('ticket_comments')
-      .select(`
-        *,
-        author:profiles!ticket_comments_created_by_fkey(name)
-      `)
-      .eq('ticket_id', ticketId)
-      .order('created_at', { ascending: true }),
+      .rpc('get_ticket_comments', {
+        p_ticket_id: ticketId
+      }),
 
-    // Get attachments
     supabase
-      .from('ticket_attachments')
-      .select(`
-        *,
-        uploaded_by_user:profiles!ticket_attachments_uploaded_by_fkey(name)
-      `)
-      .eq('ticket_id', ticketId)
-      .order('uploaded_at', { ascending: true })
+      .rpc('get_ticket_attachments', {
+        p_ticket_id: ticketId
+      })
   ])
 
   return {
@@ -187,59 +171,18 @@ export async function createTicket({ title, description, priority, workflowId })
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  // Get the user's profile ID
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('id, org_id')
-    .eq('auth_id', user.id)
-    .single()
-
-  if (profileError) return { error: profileError }
-
-  // Get first stage only if workflow is specified
-  const currentStageId = workflowId ? await getFirstStage(workflowId) : null
-
-  // Start a transaction
   const { data: ticket, error: ticketError } = await supabase
-    .from('tickets')
-    .insert({
-      workflow_id: workflowId,
-      org_id: profile.org_id,
-      created_by: profile.id,
-      current_stage_id: currentStageId
+    .rpc('create_ticket', {
+      p_title: title,
+      p_description: description,
+      p_priority: priority,
+      p_workflow_id: workflowId
     })
-    .select()
     .single()
 
   if (ticketError) return { error: ticketError }
 
-  // Create initial history entry
-  const { data: history, error: historyError } = await supabase
-    .from('ticket_history')
-    .insert({
-      ticket_id: ticket.id,
-      title,
-      description,
-      priority,
-      workflow_stage_id: ticket.current_stage_id,
-      changed_by: profile.id,
-      changes: {
-        type: 'created',
-        fields: { title, description, priority }
-      }
-    })
-    .select()
-    .single()
-
-  if (historyError) return { error: historyError }
-
-  // Update ticket with latest history
-  const { error: updateError } = await supabase
-    .from('tickets')
-    .update({ latest_history_id: history.id })
-    .eq('id', ticket.id)
-
-  return { data: ticket, error: updateError }
+  return { data: ticket }
 }
 
 // Update a ticket
@@ -247,50 +190,16 @@ export async function updateTicket(ticketId, changes) {
   const { data: profile } = await supabase.auth.getUser()
   if (!profile) return { error: 'Not authenticated' }
 
-  const { data: currentTicket, error: fetchError } = await supabase
-    .from('tickets')
-    .select(`
-      *,
-      latest_history:ticket_history!tickets_latest_history_id_fkey(*)
-    `)
-    .eq('id', ticketId)
-    .single()
-
-  if (fetchError) return { error: fetchError }
-
-  // Create new history entry with changes
-  const { data: history, error: historyError } = await supabase
-    .from('ticket_history')
-    .insert({
-      ticket_id: ticketId,
-      title: changes.title || currentTicket.latest_history.title,
-      description: changes.description || currentTicket.latest_history.description,
-      priority: changes.priority || currentTicket.latest_history.priority,
-      assigned_to: changes.assigned_to || currentTicket.latest_history.assigned_to,
-      workflow_stage_id: changes.stage_id || currentTicket.current_stage_id,
-      changed_by: profile.id,
-      previous_history_id: currentTicket.latest_history_id,
-      changes: {
-        type: 'updated',
-        fields: changes
-      }
+  return await supabase
+    .rpc('update_ticket_data', {
+      p_ticket_id: ticketId,
+      p_title: changes.title,
+      p_description: changes.description,
+      p_status: changes.status || 'open',
+      p_priority: changes.priority,
+      p_assigned_to: changes.assigned_to,
+      p_change_reason: changes.change_reason || 'Updated ticket'
     })
-    .select()
-    .single()
-
-  if (historyError) return { error: historyError }
-
-  // Update ticket with new stage and history
-  const { error: updateError } = await supabase
-    .from('tickets')
-    .update({ 
-      current_stage_id: changes.stage_id || currentTicket.current_stage_id,
-      latest_history_id: history.id,
-      updated_at: new Date()
-    })
-    .eq('id', ticketId)
-
-  return { data: history, error: updateError }
 }
 
 // Add a comment to a ticket
@@ -299,18 +208,11 @@ export async function addComment(ticketId, content, isInternal = false) {
   if (!profile) return { error: 'Not authenticated' }
 
   return await supabase
-    .from('ticket_comments')
-    .insert({
-      ticket_id: ticketId,
-      content,
-      created_by: profile.id,
-      is_internal: isInternal
+    .rpc('create_comment', {
+      p_ticket_id: ticketId,
+      p_content: content,
+      p_is_internal: isInternal
     })
-    .select(`
-      *,
-      author:profiles!ticket_comments_created_by_fkey(name)
-    `)
-    .single()
 }
 
 // Upload an attachment
@@ -329,7 +231,7 @@ export async function uploadAttachment(ticketId, file) {
   if (uploadError) return { error: uploadError }
 
   // Create attachment record
-  return await supabase
+  const { data: attachment, error: attachmentError } = await supabase
     .from('ticket_attachments')
     .insert({
       ticket_id: ticketId,
@@ -339,23 +241,35 @@ export async function uploadAttachment(ticketId, file) {
       storage_path: filePath,
       uploaded_by: profile.id
     })
-    .select(`
-      *,
-      uploaded_by_user:profiles!ticket_attachments_uploaded_by_fkey(name)
-    `)
+    .select('*')
     .single()
+
+  if (attachmentError) return { error: attachmentError }
+
+  // Get uploader profile
+  const { data: uploaderProfile } = await supabase
+    .rpc('get_profile_by_id', {
+      p_profile_id: profile.id
+    })
+
+  return {
+    data: {
+      ...attachment,
+      uploaded_by_user: uploaderProfile
+    }
+  }
 }
 
 // Helper function to get first stage of a workflow
 async function getFirstStage(workflowId) {
   const { data } = await supabase
-    .from('workflow_stages')
-    .select('id')
-    .eq('workflow_id', workflowId)
-    .eq('is_start', true)
-    .single()
+    .rpc('get_workflow_stages', {
+      workflow_uuid: workflowId
+    })
   
-  return data?.id
+  // Find the start stage from the returned stages
+  const startStage = data?.find(stage => stage.is_start)
+  return startStage?.id
 }
 
 // Subscribe to ticket updates

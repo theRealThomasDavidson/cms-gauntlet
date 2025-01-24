@@ -48,6 +48,12 @@ create index profiles_username_idx on profiles(username);
 -- Enable RLS on profiles
 alter table profiles enable row level security;
 
+-- Basic policy for authenticated users
+create policy "authenticated users can view profiles"
+  on profiles for select
+  to authenticated
+  using (true);
+
 -- Drop existing policies
 drop policy if exists "allow trigger to create profiles" on profiles;
 drop policy if exists "users can view own profile" on profiles;
@@ -84,6 +90,18 @@ create policy "admins can update all profiles"
 create policy "admins can delete profiles"
   on profiles for delete
   using (is_admin() = true);
+
+-- Users can view profiles in their organization
+create policy "users can view org profiles"
+  on profiles for select
+  using (
+    org_id = (
+      select org_id 
+      from profiles 
+      where auth_id = auth.uid() 
+      limit 1
+    )
+  );
 
 -- Create a trigger function to create a profile when a user signs up
 create or replace function public.handle_new_user()
@@ -302,4 +320,41 @@ end;
 $$;
 
 -- Grant execute permission
-grant execute on function get_profile_by_auth_id(uuid) to authenticated; 
+grant execute on function get_profile_by_auth_id(uuid) to authenticated;
+
+-- Function to get a profile by ID
+create or replace function get_profile_by_id(
+  p_profile_id uuid
+) returns table (
+  id uuid,
+  name text,
+  email text,
+  role user_role
+) security definer as $$
+begin
+  -- Verify user has permission to view profile
+  if not exists (
+    select 1 from profiles p1
+    where p1.auth_id = auth.uid()
+    and exists (
+      select 1 from profiles p2
+      where p2.id = p_profile_id
+      and p2.org_id = p1.org_id
+    )
+  ) then
+    raise exception 'User does not have permission to view this profile';
+  end if;
+
+  return query
+  select 
+    p.id,
+    p.name,
+    p.email,
+    p.role
+  from profiles p
+  where p.id = p_profile_id;
+end;
+$$ language plpgsql;
+
+-- Grant execute permissions
+grant execute on function get_profile_by_id(uuid) to authenticated; 

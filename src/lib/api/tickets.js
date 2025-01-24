@@ -12,16 +12,13 @@ import { supabase } from '../supabaseClient'
  */
 export const createTicket = async (ticket) => {
   return await supabase
-    .from('tickets')
-    .insert([{
-      org_id: ticket.orgId,
-      title: ticket.title,
-      description: ticket.description,
-      priority: ticket.priority,
-      workflow_id: ticket.workflowId,
-      status: 'open'
-    }])
-    .select()
+    .rpc('create_ticket', {
+      p_org_id: ticket.orgId,
+      p_title: ticket.title,
+      p_description: ticket.description,
+      p_priority: ticket.priority,
+      p_workflow_id: ticket.workflowId
+    })
     .single()
 }
 
@@ -62,12 +59,11 @@ export const updateTicket = async (ticketId, updates) => {
  */
 export const addComment = async ({ ticketId, content, isInternal = false }) => {
   return await supabase
-    .from('ticket_comments')
-    .insert([{
-      ticket_id: ticketId,
-      content,
-      is_internal: isInternal
-    }])
+    .rpc('create_comment', {
+      p_ticket_id: ticketId,
+      p_content: content,
+      p_is_internal: isInternal
+    })
 }
 
 /**
@@ -82,14 +78,13 @@ export const addComment = async ({ ticketId, content, isInternal = false }) => {
  */
 export const addAttachment = async (attachment) => {
   return await supabase
-    .from('ticket_attachments')
-    .insert([{
-      ticket_id: attachment.ticketId,
-      file_name: attachment.fileName,
-      file_type: attachment.fileType,
-      file_size: attachment.fileSize,
-      storage_path: attachment.storagePath
-    }])
+    .rpc('create_attachment', {
+      p_ticket_id: attachment.ticketId,
+      p_file_name: attachment.fileName,
+      p_file_type: attachment.fileType,
+      p_file_size: attachment.fileSize,
+      p_storage_path: attachment.storagePath
+    })
 }
 
 /**
@@ -99,9 +94,9 @@ export const addAttachment = async (attachment) => {
  */
 export const getTicketDetails = async (ticketId) => {
   return await supabase
-    .from('ticket_details')
-    .select('*')
-    .eq('ticket_id', ticketId)
+    .rpc('get_ticket_details', {
+      p_ticket_id: ticketId
+    })
     .single()
 }
 
@@ -112,22 +107,9 @@ export const getTicketDetails = async (ticketId) => {
  */
 export const getTicketHistory = async (ticketId) => {
   return await supabase
-    .from('ticket_history')
-    .select(`
-      id,
-      title,
-      description,
-      priority,
-      assigned_to,
-      workflow_stage_id,
-      changed_by,
-      changed_at,
-      changes,
-      profiles:assigned_to (name),
-      changed_by_profile:changed_by (name)
-    `)
-    .eq('ticket_id', ticketId)
-    .order('changed_at', { ascending: false })
+    .rpc('get_ticket_history', {
+      p_ticket_id: ticketId
+    })
 }
 
 /**
@@ -137,13 +119,9 @@ export const getTicketHistory = async (ticketId) => {
  */
 export const getTicketComments = async (ticketId) => {
   return await supabase
-    .from('ticket_comments')
-    .select(`
-      *,
-      profiles:created_by (name)
-    `)
-    .eq('ticket_id', ticketId)
-    .order('created_at', { ascending: true })
+    .rpc('get_ticket_comments', {
+      p_ticket_id: ticketId
+    })
 }
 
 /**
@@ -153,13 +131,9 @@ export const getTicketComments = async (ticketId) => {
  */
 export const getTicketAttachments = async (ticketId) => {
   return await supabase
-    .from('ticket_attachments')
-    .select(`
-      *,
-      profiles:uploaded_by (name)
-    `)
-    .eq('ticket_id', ticketId)
-    .order('uploaded_at', { ascending: false })
+    .rpc('get_ticket_attachments', {
+      p_ticket_id: ticketId
+    })
 }
 
 /**
@@ -172,24 +146,13 @@ export const getTicketAttachments = async (ticketId) => {
  * @returns {Promise<{ data, error }>} Supabase response
  */
 export const getAgentTickets = async (filters = {}) => {
-  let query = supabase
-    .from('agent_tickets')
-    .select('*')
-
-  if (filters.orgId) {
-    query = query.eq('org_id', filters.orgId)
-  }
-  if (filters.priority) {
-    query = query.eq('priority', filters.priority)
-  }
-  if (filters.assignedTo) {
-    query = query.eq('assigned_to', filters.assignedTo)
-  }
-  if (filters.stageId) {
-    query = query.eq('current_stage_id', filters.stageId)
-  }
-
-  return await query.order('updated_at', { ascending: false })
+  return await supabase
+    .rpc('get_agent_tickets', {
+      p_org_id: filters.orgId,
+      p_priority: filters.priority,
+      p_assigned_to: filters.assignedTo,
+      p_stage_id: filters.stageId
+    })
 }
 
 /**
@@ -198,9 +161,7 @@ export const getAgentTickets = async (filters = {}) => {
  */
 export const getCustomerTickets = async () => {
   return await supabase
-    .from('customer_tickets')
-    .select('*')
-    .order('updated_at', { ascending: false })
+    .rpc('get_customer_tickets')
 }
 
 /**
@@ -210,9 +171,9 @@ export const getCustomerTickets = async () => {
  */
 export const getWorkflowStageStats = async (orgId) => {
   return await supabase
-    .from('workflow_stage_stats')
-    .select('*')
-    .eq('org_id', orgId)
+    .rpc('get_workflow_stage_stats', {
+      p_org_id: orgId
+    })
 }
 
 /**
@@ -231,9 +192,9 @@ export const refreshTicketStats = async () => {
  */
 export const deleteTicket = async (ticketId) => {
   return await supabase
-    .from('tickets')
-    .delete()
-    .eq('id', ticketId)
+    .rpc('delete_ticket', {
+      p_ticket_id: ticketId
+    })
 }
 
 /**
@@ -246,15 +207,11 @@ export const deleteTicket = async (ticketId) => {
  */
 export const updateComment = async (commentId, updates) => {
   return await supabase
-    .from('ticket_comments')
-    .update({
-      content: updates.content,
-      is_internal: updates.isInternal,
-      edited_at: new Date().toISOString()
+    .rpc('update_comment', {
+      p_comment_id: commentId,
+      p_content: updates.content,
+      p_is_internal: updates.isInternal
     })
-    .eq('id', commentId)
-    .select()
-    .single()
 }
 
 /**
@@ -264,9 +221,9 @@ export const updateComment = async (commentId, updates) => {
  */
 export const deleteComment = async (commentId) => {
   return await supabase
-    .from('ticket_comments')
-    .delete()
-    .eq('id', commentId)
+    .rpc('delete_comment', {
+      p_comment_id: commentId
+    })
 }
 
 /**
@@ -279,13 +236,11 @@ export const deleteComment = async (commentId) => {
  */
 export const updateAttachment = async (attachmentId, updates) => {
   return await supabase
-    .from('ticket_attachments')
-    .update({
-      file_name: updates.fileName,
-      metadata: updates.metadata
+    .rpc('update_attachment', {
+      p_attachment_id: attachmentId,
+      p_file_name: updates.fileName,
+      p_metadata: updates.metadata
     })
-    .eq('id', attachmentId)
-    .select()
     .single()
 }
 
@@ -296,7 +251,20 @@ export const updateAttachment = async (attachmentId, updates) => {
  */
 export const deleteAttachment = async (attachmentId) => {
   return await supabase
-    .from('ticket_attachments')
-    .delete()
-    .eq('id', attachmentId)
+    .rpc('delete_attachment', {
+      p_attachment_id: attachmentId
+    })
+}
+
+/**
+ * Get ticket by ID
+ * @param {string} ticketId The ticket ID
+ * @returns {Promise<{ data, error }>} Supabase response
+ */
+export const getTicketById = async (ticketId) => {
+  return await supabase
+    .rpc('get_ticket_by_id', {
+      p_ticket_id: ticketId
+    })
+    .single();
 }

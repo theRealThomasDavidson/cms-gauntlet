@@ -3,8 +3,11 @@ import SideBar from '../components/SideBar'
 import Workspace from '../components/Workspace'
 import { useState, useEffect } from 'react'
 import { getVisibleProfiles } from '../lib/supabaseClient'
+import { useNavigate, useLocation } from 'react-router-dom'
 
 export default function Dashboard() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [activeComponent, setActiveComponent] = useState('dashboard')
   const [workflowState, setWorkflowState] = useState({ view: 'list', id: null })
   const [profile, setProfile] = useState(null)
@@ -13,6 +16,17 @@ export default function Dashboard() {
   useEffect(() => {
     loadProfile()
   }, [])
+
+  // Handle URL-based navigation
+  useEffect(() => {
+    const path = location.pathname;
+    const match = path.match(/^\/workflows\/([^/]+)\/kanban$/);
+    if (match) {
+      const workflowId = match[1];
+      setActiveComponent('workflows');
+      setWorkflowState({ view: 'kanban', id: workflowId });
+    }
+  }, [location]);
 
   const loadProfile = async () => {
     try {
@@ -41,9 +55,9 @@ export default function Dashboard() {
     setWorkflowState({ view: 'detail', id })
   }
 
-  const handleWorkflowAction = () => {
+  const handleWorkflowAction = (view = 'list', id = null) => {
     setActiveComponent('workflows')
-    setWorkflowState({ view: 'list', id: null })
+    setWorkflowState({ view, id })
   }
 
   if (loading) return <div>Loading...</div>
