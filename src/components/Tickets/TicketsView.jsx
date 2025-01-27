@@ -6,6 +6,7 @@ import AssignedUserDisplay from './AssignedUserDisplay';
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 import TicketDetail from './TicketDetail';
+import MyTickets from './MyTickets';
 
 export default function TicketsView({ profile }) {
   const navigate = useNavigate();
@@ -188,27 +189,31 @@ export default function TicketsView({ profile }) {
       )}
 
       {/* Workflow Sections */}
-      {
-      (profile.role === 'admin' || profile.role === 'agent') &&
+      {(profile.role === 'admin' || profile.role === 'agent') &&
         workflows.map(workflow => (
-        <div key={workflow.id} className="mb-8 border border-gray-200 rounded-lg p-6 bg-white shadow-sm">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold">{workflow.name}</h2>
-            <button
-              onClick={() => navigate(`/workflows/${workflow.id}/kanban`)}
-              className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all flex items-center gap-2"
-            >
-              <ArrowRight size={20} />
-              View Kanban
-            </button>
+          <div key={workflow.id} className="mb-8 border border-gray-200 rounded-lg p-6 bg-white shadow-sm">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold">{workflow.name}</h2>
+              <button
+                onClick={() => navigate(`/workflows/${workflow.id}/kanban`)}
+                className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all flex items-center gap-2"
+              >
+                <ArrowRight size={20} />
+                View Kanban
+              </button>
+            </div>
+            <div className="grid gap-4">
+              {workflowTickets[workflow.id]?.length === 0 ? (
+                <p className="text-gray-500 italic">No tickets in this workflow</p>
+              ) : renderTicketList(workflowTickets[workflow.id] || [], false)}
+            </div>
           </div>
-          <div className="grid gap-4">
-            {workflowTickets[workflow.id]?.length === 0 ? (
-              <p className="text-gray-500 italic">No tickets in this workflow</p>
-            ) : renderTicketList(workflowTickets[workflow.id] || [], false)}
-          </div>
-        </div>
-      ))}
+        ))}
+
+      {/* My Tickets Section - Show for all users */}
+      <div className="mb-8 border border-gray-200 rounded-lg p-6 bg-white shadow-sm">
+        <MyTickets onSelectTicket={setSelectedTicketId} />
+      </div>
 
       {showWorkflowModal && selectedTicket && (
         <AssignWorkflowModal
