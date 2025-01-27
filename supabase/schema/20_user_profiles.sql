@@ -49,13 +49,8 @@ create index profiles_username_idx on profiles(username);
 -- Enable RLS on profiles
 alter table profiles enable row level security;
 
--- Basic policy for authenticated users
-create policy "authenticated users can view profiles"
-  on profiles for select
-  to authenticated
-  using (true);
-
--- Drop existing policies
+-- Drop all existing policies first
+drop policy if exists "authenticated users can view profiles" on profiles;
 drop policy if exists "allow trigger to create profiles" on profiles;
 drop policy if exists "users can view own profile" on profiles;
 drop policy if exists "users can update own profile" on profiles;
@@ -79,28 +74,26 @@ create policy "users can update own profile"
   on profiles for update
   using (auth_id = auth.uid());
 
--- Admin policies using the helper function
-create policy "admins can view all profiles"
-  on profiles for select
-  using (is_admin() = true);
-
-create policy "admins can update all profiles"
-  on profiles for update
-  using (is_admin() = true);
-
-create policy "admins can delete profiles"
-  on profiles for delete
-  using (is_admin() = true);
-
 -- Users can view profiles in their organization
 create policy "users can view org profiles"
   on profiles for select
   using (
-    org_id = (
+    org_id in (
       select org_id 
       from profiles 
+      where auth_id = auth.uid()
+    )
+  );
+
+-- Admin policies
+create policy "admins can manage all profiles"
+  on profiles for all
+  using (
+    exists (
+      select 1 
+      from profiles 
       where auth_id = auth.uid() 
-      limit 1
+      and role = 'admin'
     )
   );
 
@@ -121,15 +114,17 @@ begin
   -- Get or create default org
   default_org_id := get_or_create_default_org();
 
-  -- Handle both GitHub and email signup metadata formats
+  -- For email signups, use email as fallback for username/name
   v_username := coalesce(
-    new.raw_user_meta_data->>'user_name',  -- GitHub format
-    new.raw_user_meta_data->>'username'    -- Email signup format
+    new.raw_user_meta_data->>'username',    -- Email signup format
+    new.raw_user_meta_data->>'user_name',   -- GitHub format
+    split_part(new.email, '@', 1)           -- Fallback to email username
   );
   
   v_name := coalesce(
-    new.raw_user_meta_data->>'user_name',  -- GitHub format
-    new.raw_user_meta_data->>'name'        -- Email signup format
+    new.raw_user_meta_data->>'name',        -- Email signup format
+    new.raw_user_meta_data->>'user_name',   -- GitHub format
+    v_username                              -- Fallback to username
   );
   
   -- Create profile with default org
@@ -230,27 +225,11 @@ returns setof profiles
 security definer
 language plpgsql
 as $$
-declare
-  v_user_id uuid;
-  v_role user_role;
-  v_org_id uuid;
 begin
-  -- Get current user's ID
-  v_user_id := auth.uid();
-  
-  -- Get user's role and org_id
-  select role, org_id into v_role, v_org_id
-  from profiles
-  where auth_id = v_user_id;
-
-  -- Return appropriate profiles based on role
-  if v_role = 'admin' then
-    -- Admins can see all profiles
-    return query select * from profiles order by created_at desc;
-  else
-    -- Others can only see their own profile
-    return query select * from profiles where auth_id = v_user_id;
-  end if;
+  -- Let RLS handle the visibility rules
+  return query 
+  select * from profiles 
+  order by created_at desc;
 end;
 $$;
 
@@ -323,15 +302,18 @@ $$;
 -- Grant execute permission
 grant execute on function get_profile_by_auth_id(uuid) to authenticated;
 
+-- Drop existing function first
+drop function if exists get_profile_by_id(uuid);
+
 -- Function to get a profile by ID
-create or replace function get_profile_by_id(
-  p_profile_id uuid
-) returns table (
+create or replace function get_profile_by_id(p_profile_id uuid)
+returns table (
   id uuid,
   name text,
   email text,
-  role user_role
-) security definer as $$
+  role text
+) security definer
+as $$
 begin
   -- Verify user has permission to view profile
   if not exists (
@@ -351,7 +333,7 @@ begin
     p.id,
     p.name,
     p.email,
-    p.role
+    p.role::text
   from profiles p
   where p.id = p_profile_id;
 end;
