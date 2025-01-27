@@ -111,6 +111,16 @@ drop trigger if exists set_comment_path on kb_article_comments;
 create trigger set_comment_path before insert on kb_article_comments
   for each row execute procedure update_comment_path();
 
+-- Drop all existing policies
+drop policy if exists "public can view published articles" on kb_articles;
+drop policy if exists "public can view published article chunks" on kb_article_chunks;
+drop policy if exists "public can view categories" on kb_categories;
+drop policy if exists "public can view comments on public articles" on kb_article_comments;
+drop policy if exists "org members can view all articles" on kb_articles;
+drop policy if exists "org members can view all chunks" on kb_article_chunks;
+drop policy if exists "admins and agents can manage articles" on kb_articles;
+drop policy if exists "admins and agents can manage chunks" on kb_article_chunks;
+
 -- Public access policies for published articles
 create policy "public can view published articles"
   on kb_articles for select
@@ -119,12 +129,35 @@ create policy "public can view published articles"
     and status = 'published'
   );
 
+-- Allow authenticated users to create articles
+create policy "authenticated users can create articles"
+  on kb_articles for insert
+  to authenticated
+  with check (true);
+
 create policy "public can view published article chunks"
   on kb_article_chunks for select
   using (
     exists (
       select 1 from kb_articles a
       where a.id = kb_article_chunks.article_id
+      and a.is_public = true
+      and a.status = 'published'
+    )
+  );
+
+-- Public access to categories
+create policy "public can view categories"
+  on kb_categories for select
+  using (true);
+
+-- Public access to comments on public articles
+create policy "public can view comments on public articles"
+  on kb_article_comments for select
+  using (
+    exists (
+      select 1 from kb_articles a
+      where a.id = kb_article_comments.article_id
       and a.is_public = true
       and a.status = 'published'
     )
@@ -179,6 +212,12 @@ create policy "admins and agents can manage chunks"
       and p.role in ('admin', 'agent')
     )
   );
+
+-- Allow anyone to view kb_articles
+create policy "anyone can view kb_articles"
+  on kb_articles
+  for select
+  using (true);
 
 -- Function to search articles by similarity
 create or replace function search_kb_articles(
@@ -348,4 +387,119 @@ begin
   end if;
   return new;
 end;
-$$ language plpgsql; 
+$$ language plpgsql;
+
+-- Drop the embeddings function and trigger
+drop function if exists generate_article_embeddings() cascade;
+drop trigger if exists article_embeddings_trigger on kb_articles;
+
+-- We'll re-enable this later with proper configuration
+-- create trigger article_embeddings_trigger
+--   after insert or update of title, content
+--   on kb_articles
+--   for each row
+--   when (NEW.is_public = true and NEW.id is not null)
+--   execute function generate_article_embeddings();
+
+-- Create function for semantic search
+create or replace function search_kb_articles(
+  query_text text,
+  similarity_threshold float default 0.5,
+  match_count int default 5
+) returns table (
+  id uuid,
+  title text,
+  content text,
+  similarity float
+)
+language plpgsql
+security definer
+as $$
+declare
+  query_embedding vector(1536);
+begin
+  -- Call OpenAI API to get the embedding for the search query
+  select embedding into query_embedding
+  from (
+    select 
+      (openai.embeddings(
+        array[query_text],
+        'text-embedding-ada-002'
+      ))[1] as embedding
+  ) as query_data;
+
+  -- Return articles ordered by similarity
+  return query
+  select
+    a.id,
+    a.title,
+    a.content,
+    (a.title_embedding <=> query_embedding) as similarity
+  from kb_articles a
+  where 
+    a.is_public = true
+    and (a.title_embedding <=> query_embedding) < similarity_threshold
+  order by a.title_embedding <=> query_embedding
+  limit match_count;
+end;
+$$;
+
+-- Drop all versions of the function
+drop function if exists create_knowledge_article(text, text, text, text);
+drop function if exists create_knowledge_article(text, boolean, text, text);
+drop function if exists create_knowledge_article(text, text, boolean, text);
+drop function if exists create_knowledge_article(p_content text, p_is_public boolean, p_status text, p_title text);
+drop function if exists create_knowledge_article(p_title text, p_content text, p_is_public boolean, p_status text);
+
+-- Create a single version with clear parameter order
+create or replace function create_knowledge_article(
+  p_title text,
+  p_content text,
+  p_is_public boolean default false,
+  p_status text default 'draft'
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid;
+  v_org_id uuid;
+  v_article_id uuid;
+begin
+  -- Get user profile info
+  select id, org_id into v_user_id, v_org_id
+  from profiles
+  where auth_id = auth.uid();
+
+  -- Create the article
+  insert into kb_articles (
+    org_id,
+    title,
+    content,
+    is_public,
+    status,
+    created_by,
+    updated_by
+  ) values (
+    v_org_id,
+    p_title,
+    p_content,
+    p_is_public,
+    p_status,
+    v_user_id,
+    v_user_id
+  ) returning id into v_article_id;
+
+  return v_article_id;
+end;
+$$;
+
+-- Grant execute permission
+grant execute on function create_knowledge_article(text, text, boolean, text) to authenticated;
+
+-- Grant access to profiles table for the create_knowledge_article function
+grant usage on schema public to postgres, authenticated, anon;
+grant select on profiles to postgres;
+grant select on kb_articles to postgres; 

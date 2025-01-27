@@ -74,29 +74,13 @@ create policy "users can update own profile"
   on profiles for update
   using (auth_id = auth.uid());
 
--- Users can view profiles in their organization
-create policy "users can view org profiles"
-  on profiles for select
-  using (
-    exists (
-      select 1 
-      from profiles viewer
-      where viewer.auth_id = auth.uid()
-      and viewer.org_id = profiles.org_id
-    )
-  );
+-- Drop existing admin policy
+drop policy if exists "admins can manage all profiles" on profiles;
 
--- Admin policies
+-- Create new admin policy using JWT
 create policy "admins can manage all profiles"
   on profiles for all
-  using (
-    exists (
-      select 1 
-      from profiles 
-      where auth_id = auth.uid() 
-      and role = 'admin'
-    )
-  );
+  using (auth.jwt() ->> 'role' = 'admin');
 
 -- Create a trigger function to create a profile when a user signs up
 create or replace function public.handle_new_user()
@@ -341,4 +325,8 @@ end;
 $$ language plpgsql;
 
 -- Grant execute permissions
-grant execute on function get_profile_by_id(uuid) to authenticated; 
+grant execute on function get_profile_by_id(uuid) to authenticated;
+
+-- Grant permissions for RPC functions
+grant usage on schema public to postgres, authenticated, anon;
+grant select on profiles to postgres; 

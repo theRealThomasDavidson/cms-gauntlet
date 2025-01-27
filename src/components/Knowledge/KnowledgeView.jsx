@@ -1,10 +1,14 @@
 import { Search, Plus, ArrowLeft, Save, Upload, X } from 'lucide-react'
 import PropTypes from 'prop-types'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
+import TestEmbeddings from './TestEmbeddings'
 
 export default function KnowledgeView({ profile }) {
   const [isEditMode, setIsEditMode] = useState(false)
+  const [articles, setArticles] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
   const [formData, setFormData] = useState({
     title: '',
     content: '',
@@ -14,6 +18,33 @@ export default function KnowledgeView({ profile }) {
   const [attachments, setAttachments] = useState([])
   const [uploadError, setUploadError] = useState('')
   const canAddArticles = profile?.role === 'admin' || profile?.role === 'agent'
+
+  useEffect(() => {
+    const fetchArticles = async () => {
+      setIsLoading(true)
+      try {
+        let query = supabase
+          .from('kb_articles')
+          .select('*')
+          .order('created_at', { ascending: false })
+
+        if (searchQuery) {
+          query = query.textSearch('title', searchQuery)
+        }
+
+        const { data, error } = await query
+
+        if (error) throw error
+        setArticles(data || [])
+      } catch (err) {
+        console.error('Error fetching articles:', err)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchArticles()
+  }, [searchQuery])
 
   const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files)
@@ -87,33 +118,32 @@ export default function KnowledgeView({ profile }) {
     }
   }
 
-  // Dummy search results
-  const dummyResults = [
-    {
-      id: '1',
-      title: 'How to Reset Your Password',
-      content: 'Follow these steps to reset your password: 1. Click on the "Forgot Password" link...',
-      status: 'published',
-      is_public: true,
-      created_at: '2024-03-15T10:00:00Z'
-    },
-    {
-      id: '2',
-      title: 'Setting Up Two-Factor Authentication',
-      content: 'Two-factor authentication adds an extra layer of security to your account by requiring...',
-      status: 'published',
-      is_public: true,
-      created_at: '2024-03-14T15:30:00Z'
-    },
-    {
-      id: '3',
-      title: 'Common Troubleshooting Steps',
-      content: 'Before contacting support, try these common troubleshooting steps: 1. Clear your browser cache...',
-      status: 'published',
-      is_public: true,
-      created_at: '2024-03-13T09:15:00Z'
+  const handleTestEmbeddings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('kb_articles')
+        .insert({
+          title: 'Test Article for Embeddings',
+          content: 'This is a test article to verify that our embeddings function is working correctly. It should trigger the Edge Function when is_public is set to true.',
+          is_public: true,
+          status: 'published',
+          org_id: profile.org_id,
+          created_by: profile.id,
+          updated_by: profile.id
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+      alert('Test article created! Check the function logs.')
+    } catch (err) {
+      alert('Error creating test article: ' + err.message)
     }
-  ]
+  }
+
+  const handleSearch = (value) => {
+    setSearchQuery(value)
+  }
 
   if (isEditMode) {
     return (
@@ -252,29 +282,52 @@ export default function KnowledgeView({ profile }) {
     <div className="max-w-6xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold">Knowledge Base</h2>
-        {canAddArticles && (
-          <button 
-            className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-            onClick={() => setIsEditMode(true)}
-          >
-            <Plus className="h-5 w-5" />
-            Add Article
-          </button>
-        )}
+        <div className="flex gap-2">
+          {canAddArticles && (
+            <>
+              <button 
+                className="flex items-center gap-2 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                onClick={handleTestEmbeddings}
+              >
+                Test Embeddings
+              </button>
+              <button 
+                className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                onClick={() => setIsEditMode(true)}
+              >
+                <Plus className="h-5 w-5" />
+                Add Article
+              </button>
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Add TestEmbeddings component */}
+      {canAddArticles && (
+        <div className="mb-8">
+          <TestEmbeddings profile={profile} />
+        </div>
+      )}
 
       <div className="relative mb-8">
         <input
           type="text"
           placeholder="Search knowledge base..."
+          value={searchQuery}
+          onChange={(e) => handleSearch(e.target.value)}
           className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
       </div>
 
       <div className="space-y-6">
-        {dummyResults.length > 0 ? (
-          dummyResults.map(article => (
+        {isLoading ? (
+          <div className="flex justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          </div>
+        ) : articles.length > 0 ? (
+          articles.map(article => (
             <article 
               key={article.id} 
               className="p-6 bg-white rounded-lg border border-gray-200 hover:border-blue-500 transition-colors cursor-pointer"
@@ -287,7 +340,14 @@ export default function KnowledgeView({ profile }) {
               </p>
               <div className="flex items-center gap-4 text-sm text-gray-500">
                 <span>
-                  Published {new Date(article.created_at).toLocaleDateString()}
+                  {article.created_at ? new Date(article.created_at).toLocaleDateString() : 'Date not available'}
+                </span>
+                <span className={`px-2 py-1 rounded-full text-xs ${
+                  article.status === 'published' 
+                    ? 'bg-green-100 text-green-800' 
+                    : 'bg-yellow-100 text-yellow-800'
+                }`}>
+                  {article.status}
                 </span>
                 {!article.is_public && (
                   <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs">
@@ -298,7 +358,7 @@ export default function KnowledgeView({ profile }) {
             </article>
           ))
         ) : (
-          <p className="text-gray-600">
+          <p className="text-gray-600 text-center py-8">
             No articles found. {canAddArticles && 'Click the Add Article button to create one!'}
           </p>
         )}

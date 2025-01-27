@@ -423,7 +423,7 @@ begin
   join organizations org on org.id = t.org_id
   left join workflow_stages old_stage on old_stage.id = OLD.current_stage_id
   left join workflow_stages new_stage on new_stage.id = NEW.current_stage_id
-  where t.id = NEW.id;
+  where t.ticket_id = NEW.ticket_id;
 
   v_org_id := v_ticket.org_id;
   v_old_stage := v_ticket.old_stage_name;
@@ -446,10 +446,10 @@ begin
     )
   loop
     -- Get template
-    select * into v_template
-    from notification_templates
-    where id = v_rule.template_id
-    and is_active = true;
+    select t.* into v_template
+    from notification_templates t
+    where t.id = v_rule.template_id
+    and t.is_active = true;
 
     if v_template.id is null then
       continue;
@@ -457,7 +457,7 @@ begin
 
     -- Create notification for each recipient
     for v_recipient_id in
-      select * from get_notification_recipients(NEW.id, v_rule.id)
+      select recipient_id from get_notification_recipients(NEW.ticket_id, v_rule.id)
     loop
       insert into notification_logs (
         org_id,
@@ -473,7 +473,7 @@ begin
         v_org_id,
         v_rule.id,
         v_template.id,
-        NEW.id,
+        NEW.ticket_id,
         v_recipient_id,
         'ticket_stage_changed',
         replace(
@@ -581,57 +581,67 @@ grant execute on function get_pending_notifications(int) to authenticated;
 grant execute on function mark_notification_sent(uuid, text) to authenticated;
 grant execute on function mark_notification_failed(uuid, text) to authenticated;
 
--- Drop existing functions first
-drop function if exists get_user_notifications cascade;
+-- Drop both versions of get_user_notifications
+drop function if exists get_user_notifications(p_include_read boolean, p_limit integer, p_status notification_status);
+drop function if exists get_user_notifications(p_include_read boolean, p_limit integer, p_status text);
 
--- Create new function matching the working query
+-- Create the correct version
 create or replace function get_user_notifications(
+  p_include_read boolean default false,
   p_limit int default 50,
-  p_status notification_status default 'pending',
-  p_include_read boolean default false
-) returns table (
+  p_status notification_status default null
+)
+returns table (
   id uuid,
   subject text,
   body text,
-  status notification_status,
-  created_at timestamptz,
-  metadata jsonb,
   notification_type notification_type,
-  recipient_role user_role,
-  recipient_id uuid,
+  status notification_status,
+  metadata jsonb,
+  created_at timestamptz,
   ticket_id uuid
-) as $$
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
 declare
   v_user_id uuid;
   v_role user_role;
 begin
   -- Get current user's profile ID and role
-  select p.id, role into v_user_id, v_role
+  select p.id, p.role into v_user_id, v_role
   from profiles p
-  where auth_id = auth.uid();
+  where p.auth_id = auth.uid();
 
   return query
   select 
     n.id,
     n.subject,
     n.body,
-    n.status,
-    n.created_at,
-    n.metadata,
     n.notification_type,
-    n.recipient_role,
-    n.recipient_id,
+    n.status,
+    n.metadata,
+    n.created_at,
     n.ticket_id
   from notification_logs n
+  left join notification_reads nr on nr.notification_id = n.id and nr.user_id = v_user_id
   where (n.recipient_id = v_user_id or n.recipient_role = v_role)
-    and (p_status is null or n.status = p_status)
+  and (
+    p_include_read = true 
+    or nr.id is null
+  )
+  and (
+    p_status is null 
+    or n.status = p_status
+  )
   order by n.created_at desc
   limit p_limit;
 end;
-$$ language plpgsql security definer;
+$$;
 
--- Grant execute permissions
-grant execute on function get_user_notifications(int, notification_status, boolean) to authenticated;
+-- Grant execute permission
+grant execute on function get_user_notifications(boolean, int, notification_status) to authenticated;
 
 -- Enable realtime for notifications (Supabase specific)
 alter publication supabase_realtime add table notification_logs;
@@ -813,7 +823,7 @@ begin
       'ticket_stage_changed',
       NEW.created_by,
       NEW.org_id,
-      NEW.id,
+      NEW.ticket_id,
       jsonb_build_object(
         'changes', jsonb_build_object(
           'title', case when OLD.title != NEW.title then jsonb_build_object('old', OLD.title, 'new', NEW.title) else null end,
@@ -827,7 +837,7 @@ begin
   
   return NEW;
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = public;
 
 -- Create the trigger
 drop trigger if exists notify_ticket_update_trigger on tickets;
