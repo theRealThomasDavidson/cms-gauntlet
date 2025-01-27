@@ -25,16 +25,16 @@ create type notification_status as enum (
 -- Create notification templates table
 create table notification_templates (
   id uuid primary key default uuid_generate_v4(),
-  org_id uuid references organizations(id) not null,
-  name text not null,
+  org_id uuid references organizations(id),
+  name text ,
   description text,
-  subject_template text not null,
+  subject_template text ,
   body_template text not null,
-  notification_type notification_type not null,
+  notification_type notification_type ,
   is_active boolean default true,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
-  created_by uuid references profiles(id) not null,
+  created_by uuid references profiles(id) ,
   -- Ensure unique template names within an org
   unique(org_id, name)
 );
@@ -781,3 +781,58 @@ $$;
 
 -- Grant execute permission
 grant execute on function get_unread_notification_count() to authenticated;
+
+-- Create a function that will be called by the trigger
+create or replace function notify_ticket_update()
+returns trigger as $$
+begin
+  -- Only notify if there are actual changes
+  if OLD.title != NEW.title 
+     or OLD.description != NEW.description 
+     or OLD.status != NEW.status 
+     or OLD.priority != NEW.priority then
+    
+    -- Create notification for the ticket creator
+    insert into notification_logs (
+      subject,
+      body,
+      status,
+      notification_type,
+      recipient_id,
+      org_id,
+      ticket_id,
+      metadata
+    ) values (
+      'Ticket Updated: ' || NEW.title,
+      case 
+        when OLD.status != NEW.status then 'Ticket status changed to: ' || NEW.status
+        when OLD.priority != NEW.priority then 'Ticket priority changed to: ' || NEW.priority
+        else 'Ticket details have been updated'
+      end,
+      'pending',
+      'ticket_stage_changed',
+      NEW.created_by,
+      NEW.org_id,
+      NEW.id,
+      jsonb_build_object(
+        'changes', jsonb_build_object(
+          'title', case when OLD.title != NEW.title then jsonb_build_object('old', OLD.title, 'new', NEW.title) else null end,
+          'description', case when OLD.description != NEW.description then jsonb_build_object('old', OLD.description, 'new', NEW.description) else null end,
+          'status', case when OLD.status != NEW.status then jsonb_build_object('old', OLD.status, 'new', NEW.status) else null end,
+          'priority', case when OLD.priority != NEW.priority then jsonb_build_object('old', OLD.priority, 'new', NEW.priority) else null end
+        )
+      )
+    );
+  end if;
+  
+  return NEW;
+end;
+$$ language plpgsql security definer;
+
+-- Create the trigger
+drop trigger if exists notify_ticket_update_trigger on tickets;
+create trigger notify_ticket_update_trigger
+  after update
+  on tickets
+  for each row
+  execute function notify_ticket_update();

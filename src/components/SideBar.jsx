@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react'
 import { auth } from '../lib/api'
 import { supabase } from '../lib/supabaseClient'
 import PropTypes from 'prop-types'
+import { useNotifications } from '../context/NotificationContext'
 
 export default function SideBar({ setActiveComponent, onWorkflowAction }) {
   const [userRole, setUserRole] = useState(null)
-  const [unreadCount, setUnreadCount] = useState(0)
+  const { unreadCount } = useNotifications()
 
   useEffect(() => {
     let mounted = true
