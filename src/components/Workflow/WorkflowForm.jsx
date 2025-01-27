@@ -172,10 +172,12 @@ export default function WorkflowForm({ id, onCancel, profile }) {
     setError(null);
 
     try {
+      console.log('Starting workflow submission...');
       let workflowId = id;
       
       // Create or update workflow
       if (id) {
+        console.log('Updating existing workflow...');
         let { data, error } = await supabase
           .rpc('update_workflow', {
             p_id: id,
@@ -184,7 +186,9 @@ export default function WorkflowForm({ id, onCancel, profile }) {
             p_is_active: workflow.is_active
           });
         if (error) throw error;
+        console.log('Workflow updated successfully');
       } else {
+        console.log('Creating new workflow...');
         let { data, error } = await supabase
           .rpc('create_workflow', {
             p_auth_id: profile.auth_id,
@@ -192,14 +196,21 @@ export default function WorkflowForm({ id, onCancel, profile }) {
             p_name: workflow.name
           });
         if (error) throw error;
-        else workflowId = data.id;
+        else {
+          workflowId = data.id;
+          console.log('New workflow created with ID:', workflowId);
+        }
       }
 
       // First create/update all stages without links
+      console.log('Creating/updating stages...');
       const updatedStages = [];
       for (let i = 0; i < stages.length; i++) {
         const stage = stages[i];
+        console.log(`Processing stage ${i + 1}/${stages.length}: ${stage.name}`);
+        
         if (stage.id) {
+          console.log('Updating existing stage:', stage.id);
           let { data, error } = await supabase
             .rpc('update_workflow_stage', {
               p_id: stage.id,
@@ -213,9 +224,14 @@ export default function WorkflowForm({ id, onCancel, profile }) {
               p_org_id: profile.org_id,
               p_role: profile.role
             });
-          if (error) throw error;
+          if (error) {
+            console.error('Error updating stage:', error);
+            throw error;
+          }
           updatedStages.push(data);
+          console.log('Stage updated successfully');
         } else {
+          console.log('Creating new stage for workflow:', workflowId);
           let { data, error } = await supabase
             .rpc('create_workflow_stage', {
               p_workflow_id: workflowId,
@@ -225,17 +241,23 @@ export default function WorkflowForm({ id, onCancel, profile }) {
               p_is_end: i === stages.length - 1,
               p_is_other: false
             });
-          if (error) throw error;
+          if (error) {
+            console.error('Error creating stage:', error);
+            throw error;
+          }
           updatedStages.push(data);
+          console.log('New stage created successfully');
         }
       }
 
       // Now update the links
+      console.log('Updating stage links...');
       for (let i = 0; i < updatedStages.length; i++) {
         const stage = updatedStages[i];
         const nextStage = updatedStages[i + 1];
         const prevStage = updatedStages[i - 1];
 
+        console.log(`Updating links for stage ${i + 1}/${updatedStages.length}`);
         let { error } = await supabase
           .rpc('update_workflow_stage_links', {
             p_stage_id: stage.id,
@@ -243,12 +265,17 @@ export default function WorkflowForm({ id, onCancel, profile }) {
             p_prev_stage_id: prevStage?.id || null
           });
         
-        if (error) throw error;
+        if (error) {
+          console.error('Error updating stage links:', error);
+          throw error;
+        }
+        console.log('Stage links updated successfully');
       }
 
+      console.log('Workflow saved successfully!');
       onCancel(); // Go back to list view
     } catch (err) {
-      console.error('Error:', err);
+      console.error('Error saving workflow:', err);
       setError(err.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);

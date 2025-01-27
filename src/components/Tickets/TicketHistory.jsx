@@ -6,6 +6,25 @@ const TicketHistory = ({ ticketId }) => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [usernames, setUsernames] = useState({});
+
+  const fetchUsername = async (userId) => {
+    if (!userId || usernames[userId]) return;
+    try {
+      const { data, error } = await supabase.rpc('get_profile_by_id', {
+        p_profile_id: userId
+      });
+      if (error) throw error;
+      if (data) {
+        setUsernames(prev => ({
+          ...prev,
+          [userId]: data[0]?.name || 'Unknown User'
+        }));
+      }
+    } catch (err) {
+      console.error('Error fetching username:', err);
+    }
+  };
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -17,6 +36,17 @@ const TicketHistory = ({ ticketId }) => {
 
         if (error) throw error;
         setHistory(data || []);
+
+        // Fetch usernames for all unique user IDs
+        const userIds = new Set();
+        data?.forEach(entry => {
+          if (entry.changed_by) userIds.add(entry.changed_by);
+          if (entry.assigned_to) userIds.add(entry.assigned_to);
+        });
+        
+        userIds.forEach(userId => {
+          fetchUsername(userId);
+        });
       } catch (err) {
         setError(err.message);
       } finally {
@@ -45,7 +75,7 @@ const TicketHistory = ({ ticketId }) => {
                 {new Date(entry.changed_at).toLocaleString()}
               </div>
               <div className="text-sm text-gray-500">
-                Changed by: {entry.changed_by}
+                Changed by: {usernames[entry.changed_by] || 'Loading...'}
               </div>
             </div>
             
@@ -76,7 +106,7 @@ const TicketHistory = ({ ticketId }) => {
                 <p className="mt-1">Description: {entry.description}</p>
               )}
               <p className="mt-1">Priority: {entry.priority}</p>
-              <p>Assigned to: {entry.assigned_to || 'Unassigned'}</p>
+              <p>Assigned to: {entry.assigned_to ? usernames[entry.assigned_to] || 'Loading...' : 'Unassigned'}</p>
             </div>
           </div>
         ))}

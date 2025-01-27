@@ -78,10 +78,11 @@ create policy "users can update own profile"
 create policy "users can view org profiles"
   on profiles for select
   using (
-    org_id in (
-      select org_id 
-      from profiles 
-      where auth_id = auth.uid()
+    exists (
+      select 1 
+      from profiles viewer
+      where viewer.auth_id = auth.uid()
+      and viewer.org_id = profiles.org_id
     )
   );
 

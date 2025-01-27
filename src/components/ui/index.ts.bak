@@ -1,0 +1,99 @@
+import { cn } from '@/lib/utils'
+import React from 'react'
+
+// Input component
+interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  leftIcon?: React.ReactNode
+}
+
+export const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, leftIcon, ...props }, ref) => {
+    return (
+      <div className="relative">
+        {leftIcon && (
+          <div className="absolute left-3 top-1/2 -translate-y-1/2">
+            {leftIcon}
+          </div>
+        )}
+        <input
+          className={cn(
+            "w-full rounded-md border border-gray-300 bg-white px-4 py-2 text-sm",
+            leftIcon && "pl-10",
+            className
+          )}
+          ref={ref}
+          {...props}
+        />
+      </div>
+    )
+  }
+)
+Input.displayName = 'Input'
+
+// Card component
+interface CardProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+export const Card = React.forwardRef<HTMLDivElement, CardProps>(
+  ({ className, ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        className={cn(
+          "rounded-lg border border-gray-200 bg-white shadow-sm",
+          className
+        )}
+        {...props}
+      />
+    )
+  }
+)
+Card.displayName = 'Card'
+
+// Tag component
+interface TagProps extends React.HTMLAttributes<HTMLDivElement> {
+  onClose?: () => void
+}
+
+export const Tag = React.forwardRef<HTMLDivElement, TagProps>(
+  ({ className, children, onClose, ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        className={cn(
+          "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
+          className
+        )}
+        {...props}
+      >
+        {children}
+        {onClose && (
+          <button
+            type="button"
+            className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-blue-200"
+            onClick={onClose}
+          >
+            <span className="sr-only">Remove</span>
+            ×
+          </button>
+        )}
+      </div>
+    )
+  }
+)
+Tag.displayName = 'Tag'
+
+// Skeleton component
+interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+export const Skeleton = React.forwardRef<HTMLDivElement, SkeletonProps>(
+  ({ className, ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        className={cn("animate-pulse rounded-md bg-gray-200", className)}
+        {...props}
+      />
+    )
+  }
+)
+Skeleton.displayName = 'Skeleton' 

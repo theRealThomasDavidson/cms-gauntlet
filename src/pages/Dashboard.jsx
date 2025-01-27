@@ -20,17 +20,46 @@ export default function Dashboard() {
   const [sessionKey, setSessionKey] = useState(Date.now());
 
   const clearAllState = useCallback(() => {
-    console.log('Clearing all state...');
+    console.log('Clearing all application state...');
+    
+    // Clear React state
     setProfile(null);
     setAllProfiles([]);
     setSelectedProfileId(null);
     setActiveComponent('dashboard');
     setWorkflowState({ view: 'list', id: null });
     setTicketId(null);
-    setSessionKey(Date.now());
+    setSessionKey(Date.now()); // Forces remount of components
     
+    // Clear all localStorage
+    console.log('Clearing localStorage...');
     localStorage.clear();
-    supabase.channel('*').unsubscribe();
+    
+    // Clear all Supabase subscriptions
+    console.log('Clearing Supabase subscriptions...');
+    supabase.removeAllChannels();
+    
+    // Clear any cached data in IndexedDB
+    console.log('Clearing IndexedDB...');
+    window.indexedDB.databases().then(databases => {
+      databases.forEach(database => {
+        window.indexedDB.deleteDatabase(database.name);
+      });
+    });
+    
+    // Clear session storage
+    console.log('Clearing sessionStorage...');
+    sessionStorage.clear();
+    
+    // Clear any service worker caches
+    if ('caches' in window) {
+      console.log('Clearing service worker caches...');
+      caches.keys().then(names => {
+        names.forEach(name => {
+          caches.delete(name);
+        });
+      });
+    }
   }, []);
 
   // Load profile on mount and auth state changes

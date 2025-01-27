@@ -60,7 +60,7 @@ const TicketDetail = ({ ticketId, onBack }) => {
           </div>
           <div>
             <p>Stage: {ticket.stage_name || 'Unassigned'}</p>
-            <p>Assigned to: {ticket.assigned_to || 'Unassigned'}</p>
+            <p>Assigned to: {ticket.assigned_to_name || 'Unassigned'}</p>
           </div>
         </div>
 
