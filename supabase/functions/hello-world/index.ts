@@ -4,19 +4,51 @@
 
 // Setup type definitions for built-in Supabase Runtime APIs
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7'
 
-console.log("Hello from Functions!")
-
-Deno.serve(async (req) => {
-  const { name } = await req.json()
-  const data = {
-    message: `Hello ${name}!`,
+Deno.serve(async (_req) => {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   }
 
-  return new Response(
-    JSON.stringify(data),
-    { headers: { "Content-Type": "application/json" } },
-  )
+  // Handle preflight OPTIONS request
+  if (_req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    // Get our test secret
+    const testSecret = Deno.env.get('MY_TEST_SECRET')
+
+    return new Response(
+      JSON.stringify({ 
+        message: "Successfully retrieved test secret!",
+        testSecret,
+      }),
+      { 
+        headers: { 
+          'Content-Type': 'application/json',
+          ...corsHeaders
+        } 
+      },
+    )
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ 
+        message: "Error in Edge Function",
+        error: error.message 
+      }),
+      { 
+        status: 500,
+        headers: { 
+          'Content-Type': 'application/json',
+          ...corsHeaders
+        } 
+      },
+    )
+  }
 })
 
 /* To invoke locally:

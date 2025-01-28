@@ -461,7 +461,7 @@ create or replace function create_knowledge_article(
 returns uuid
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, auth
 as $$
 declare
   v_user_id uuid;
@@ -470,8 +470,12 @@ declare
 begin
   -- Get user profile info
   select id, org_id into v_user_id, v_org_id
-  from profiles
-  where auth_id = auth.uid();
+  from profiles p
+  where p.auth_id = auth.uid();
+
+  if v_user_id is null then
+    raise exception 'Profile not found for current user';
+  end if;
 
   -- Create the article
   insert into kb_articles (
@@ -499,7 +503,7 @@ $$;
 -- Grant execute permission
 grant execute on function create_knowledge_article(text, text, boolean, text) to authenticated;
 
--- Grant access to profiles table for the create_knowledge_article function
+-- Grant necessary table permissions
 grant usage on schema public to postgres, authenticated, anon;
-grant select on profiles to postgres;
-grant select on kb_articles to postgres; 
+grant select on profiles to postgres, authenticated;
+grant select, insert on kb_articles to postgres, authenticated; 
