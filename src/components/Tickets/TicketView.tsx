@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Loader2, Sparkles } from "lucide-react"
+import { Loader2, Sparkles, Plus, MessageSquare } from "lucide-react"
 import { supabase } from '../../lib/supabaseClient'
 import { MessagePreviewDialog } from './MessagePreviewDialog.jsx'
+import CustomerMessageDialog from './CustomerMessageDialog'
 
 interface TicketViewProps {
   ticket: {
@@ -27,6 +28,8 @@ interface TicketViewProps {
     }>;
     current_stage_id?: string;
     stages?: Array<any>;
+    stage_name?: string;
+    assigned_to?: string;
   }
 }
 
@@ -35,6 +38,9 @@ export function TicketView({ ticket }: TicketViewProps) {
   const [showPreview, setShowPreview] = useState(false)
   const [generatedMessage, setGeneratedMessage] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [showMessageDialog, setShowMessageDialog] = useState(false)
+  const [generatingMessage, setGeneratingMessage] = useState(false)
+  const [generationStep, setGenerationStep] = useState('')
 
   const handleGenerateMessage = async () => {
     try {
@@ -98,23 +104,33 @@ export function TicketView({ ticket }: TicketViewProps) {
         <div className="text-red-600 text-sm">{error}</div>
       )}
       
-      <button 
-        onClick={handleGenerateMessage}
-        disabled={isGenerating}
-        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-      >
-        {isGenerating ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Generating message...
-          </>
-        ) : (
-          <>
-            <Sparkles className="h-4 w-4" />
-            Generate Smart Message
-          </>
-        )}
-      </button>
+      <div className="flex gap-2">
+        <button 
+          onClick={handleGenerateMessage}
+          disabled={isGenerating}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+        >
+          {isGenerating ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Generating message...
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-4 w-4" />
+              Generate Smart Message
+            </>
+          )}
+        </button>
+
+        <button
+          onClick={() => setShowMessageDialog(true)}
+          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center gap-2"
+        >
+          <Plus className="h-4 w-4" />
+          Add Information
+        </button>
+      </div>
 
       <MessagePreviewDialog
         isOpen={showPreview}
@@ -135,6 +151,42 @@ export function TicketView({ ticket }: TicketViewProps) {
         generatedMessage={generatedMessage}
         isLoading={isGenerating}
       />
+
+      {showMessageDialog && (
+        <CustomerMessageDialog
+          isOpen={showMessageDialog}
+          onClose={() => {
+            setShowMessageDialog(false)
+            setGeneratedMessage('')
+            setGenerationStep('')
+          }}
+          onConfirm={async (message: string) => {
+            try {
+              const { error: commentError } = await supabase.rpc('create_ticket_comment', {
+                p_ticket_id: ticket.id,
+                p_content: message,
+                p_is_internal: false
+              });
+
+              if (commentError) throw commentError;
+
+              await fetchTicketDetails();
+            } catch (err) {
+              console.error('Error adding comment:', err);
+            }
+            setShowMessageDialog(false);
+          }}
+          ticketContext={{
+            title: ticket.title,
+            description: ticket.description,
+            currentStageId: ticket.current_stage_id,
+            stageName: ticket.stage_name
+          }}
+          generatedMessage={generatedMessage}
+          isLoading={generatingMessage}
+          loadingStep={generationStep}
+        />
+      )}
     </div>
   )
 } 

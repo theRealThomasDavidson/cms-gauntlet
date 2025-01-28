@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { ChatOpenAI } from "https://esm.sh/langchain@0.0.197/chat_models/openai"
 import { SystemMessage, HumanMessage } from "https://esm.sh/langchain@0.0.197/schema"
 import { PromptTemplate } from "https://esm.sh/langchain@0.0.197/prompts"
