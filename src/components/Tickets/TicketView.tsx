@@ -1,19 +1,32 @@
 import { useState } from 'react'
 import { Loader2, Sparkles } from "lucide-react"
 import { supabase } from '../../lib/supabaseClient'
-import { MessagePreviewDialog } from './MessagePreviewDialog'
+import { MessagePreviewDialog } from './MessagePreviewDialog.jsx'
 
 interface TicketViewProps {
   ticket: {
     id: string;
     title: string;
     description?: string;
-    student?: {
-      name?: string;
-      recentActivity?: string[];
-      upcomingEvents?: string[];
+    created_by: string; // Customer who created the ticket
+    status: 'open' | 'in_progress' | 'resolved' | 'closed' | 'on_hold';
+    priority: 'low' | 'medium' | 'high' | 'urgent';
+    customer?: {
+      username?: string;
+      full_name?: string;
     };
-    subject?: string;
+    history?: Array<{
+      id: string;
+      description?: string;
+      changed_at: string;
+      changes: {
+        action?: string;
+        from?: string;
+        to?: string;
+      };
+    }>;
+    current_stage_id?: string;
+    stages?: Array<any>;
   }
 }
 
@@ -29,11 +42,20 @@ export function TicketView({ ticket }: TicketViewProps) {
       setError(null)
       
       const context = {
-        studentName: ticket.student?.name,
-        recentActivity: ticket.student?.recentActivity,
-        upcomingEvents: ticket.student?.upcomingEvents,
-        ticketSubject: ticket.subject
+        customerName: ticket.customer?.full_name || ticket.customer?.username,
+        ticketTitle: ticket.title,
+        ticketDescription: ticket.description,
+        ticketPriority: ticket.priority,
+        ticketStatus: ticket.status,
+        ticketHistory: ticket.history?.map(h => ({
+          description: h.description,
+          action: h.changes.action,
+          timestamp: h.changed_at,
+          change: h.changes.from ? `${h.changes.from} → ${h.changes.to}` : undefined
+        }))
       }
+
+      console.log('Sending context:', context)
 
       const { data, error } = await supabase.functions.invoke('outreach-gpt', {
         body: { context }
@@ -45,7 +67,7 @@ export function TicketView({ ticket }: TicketViewProps) {
       setShowPreview(true)
 
     } catch (error) {
-      console.error('Error:', error)
+      console.error('Full error:', error)
       setError('Failed to generate message')
     } finally {
       setIsGenerating(false)
@@ -101,10 +123,14 @@ export function TicketView({ ticket }: TicketViewProps) {
         ticketContext={{
           title: ticket.title,
           description: ticket.description || '',
-          currentStageId: '',
-          stages: [],
+          currentStageId: ticket.current_stage_id || '',
+          stages: ticket.stages || [],
           knowledgeKeywords: [],
-          customerInfo: {}
+          customerInfo: {
+            name: ticket.customer?.full_name || ticket.customer?.username,
+            priority: ticket.priority,
+            status: ticket.status
+          }
         }}
         generatedMessage={generatedMessage}
         isLoading={isGenerating}

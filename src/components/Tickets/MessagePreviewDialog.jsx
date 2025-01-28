@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { X } from 'lucide-react';
 
@@ -8,10 +8,15 @@ export function MessagePreviewDialog({
   onConfirm, 
   ticketContext, 
   generatedMessage, 
-  isLoading 
+  isLoading,
+  loadingStep
 }) {
   const [message, setMessage] = useState(generatedMessage);
   const [selectedStage, setSelectedStage] = useState(ticketContext.currentStageId);
+
+  useEffect(() => {
+    setMessage(generatedMessage);
+  }, [generatedMessage]);
 
   if (!isOpen) return null;
 
@@ -42,6 +47,13 @@ export function MessagePreviewDialog({
             ))}
           </select>
         </div>
+
+        {/* Add loading indicator */}
+        {isLoading && (
+          <div className="mb-4 text-sm text-gray-600">
+            {loadingStep || 'Loading...'}
+          </div>
+        )}
 
         {/* Message Preview */}
         <div className="mb-4">
@@ -93,5 +105,6 @@ MessagePreviewDialog.propTypes = {
     customerInfo: PropTypes.object
   }).isRequired,
   generatedMessage: PropTypes.string.isRequired,
-  isLoading: PropTypes.bool.isRequired
+  isLoading: PropTypes.bool.isRequired,
+  loadingStep: PropTypes.string
 }; 

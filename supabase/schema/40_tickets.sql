@@ -1098,4 +1098,7 @@ CREATE POLICY "Users can insert ticket history" ON ticket_history
       JOIN profiles p ON p.org_id = t.org_id
       WHERE p.id = auth.uid()
     )
-  ); 
+  );
+
+-- Create enum type if it doesn't exist
+CREATE TYPE ticket_priority AS ENUM ('low', 'medium', 'high', 'urgent'); 
