@@ -1,6 +1,5 @@
 {
   "imports": {
-    "langchain/": "https://esm.sh/langchain@0.0.197/",
     "std/": "https://deno.land/std@0.168.0/"
   },
   "tasks": {

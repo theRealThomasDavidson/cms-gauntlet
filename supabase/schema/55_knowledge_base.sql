@@ -506,4 +506,16 @@ grant execute on function create_knowledge_article(text, text, boolean, text) to
 -- Grant necessary table permissions
 grant usage on schema public to postgres, authenticated, anon;
 grant select on profiles to postgres, authenticated;
-grant select, insert on kb_articles to postgres, authenticated; 
+grant select, insert on kb_articles to postgres, authenticated;
+
+-- Add policy for public read access to published articles
+create policy "Anyone can read published articles"
+  on kb_articles
+  for select
+  using (
+    is_public = true 
+    and status = 'published'
+  );
+
+-- Grant necessary permissions
+grant select on kb_articles to anon, authenticated; 
