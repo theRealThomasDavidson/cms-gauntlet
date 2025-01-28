@@ -1,10 +1,12 @@
--- Create a table to log edge function calls and responses
+-- Create edge function logs table
 CREATE TABLE IF NOT EXISTS edge_function_logs (
-  id BIGSERIAL PRIMARY KEY,
-  function_name TEXT,
-  response JSON,
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  function_name TEXT NOT NULL,
+  ticket_id UUID REFERENCES tickets(id),
+  response JSONB,
+  metadata JSONB,
   error TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Drop all existing policies
@@ -46,6 +48,19 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT ALL ON TABLE edge_function_logs TO authenticated;
 GRANT USAGE, SELECT ON SEQUENCE edge_function_logs_id_seq TO authenticated;
 GRANT EXECUTE ON FUNCTION test_edge_secret() TO authenticated;
+
+-- Add RLS
+ALTER TABLE edge_function_logs ENABLE ROW LEVEL SECURITY;
+
+-- Policy for viewing logs
+CREATE POLICY "Users can view logs for their org's tickets" ON edge_function_logs
+  FOR SELECT USING (
+    ticket_id IN (
+      SELECT t.id FROM tickets t
+      JOIN profiles p ON p.org_id = t.org_id
+      WHERE p.id = auth.uid()
+    )
+  );
 
 -- You can check the results with:
 -- SELECT * FROM edge_function_logs ORDER BY created_at DESC LIMIT 1; 

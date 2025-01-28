@@ -3,19 +3,17 @@ import { supabase } from '../lib/supabaseClient'
 import { useNavigate } from 'react-router-dom'
 import './TopBar.css'
 
-export function TopBar() {
-  console.log('TopBar component rendered')
+export function TopBar({ onMenuClick, profile }) {
   const navigate = useNavigate()
 
   const handleSignOut = async () => {
-    console.log('Logout button clicked - handleSignOut called')
     try {
       console.log('Attempting to sign out...')
       // First try to remove all subscriptions
       try {
         await supabase.removeAllChannels()
       } catch (e) {
-        console.log('Error removing channels:', e)
+        // If we fail to remove channels, we'll handle it in the catch block
       }
       
       // Then attempt to sign out

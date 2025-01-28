@@ -1,11 +1,11 @@
 {
   "imports": {
-    "http/": "https://deno.land/std@0.168.0/http/",
-    "openai": "https://esm.sh/openai@3.2.1",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2"
+    "langchain/": "https://esm.sh/langchain@0.0.197/",
+    "std/": "https://deno.land/std@0.168.0/"
   },
   "tasks": {
-    "start": "deno run --allow-net --allow-env index.ts"
+    "dev": "deno run --allow-net --allow-env --allow-read index.ts",
+    "deploy": "supabase functions deploy outreach-gpt"
   },
   "compilerOptions": {
     "allowJs": true,

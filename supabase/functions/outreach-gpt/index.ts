@@ -1,6 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import OpenAI from "https://esm.sh/openai@4.20.1"
+import { ChatOpenAI } from "https://esm.sh/langchain/chat_models/openai"
+import { 
+  SystemMessage, 
+  HumanMessage 
+} from "https://esm.sh/langchain/schema"
+import { PromptTemplate } from "https://esm.sh/langchain/prompts"
 import { corsHeaders } from "../_shared/cors.ts"
 
 serve(async (req) => {
@@ -10,64 +14,57 @@ serve(async (req) => {
   }
 
   try {
-    // Initialize Supabase client for logging
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
-
-    // Initialize OpenAI with newer API
-    const openai = new OpenAI({
-      apiKey: Deno.env.get('OPENAI_API_KEY')
+    const { context } = await req.json()
+    
+    // Initialize LangChain chat model
+    const chat = new ChatOpenAI({
+      temperature: 0.7,
+      modelName: "gpt-3.5-turbo",
+      openAIApiKey: Deno.env.get('OPENAI_API_KEY'),
     })
 
-    try {
-      // Test a simple completion
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4",
-        messages: [
-          { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: "Say hello!" }
-        ],
-      })
+    // Create a prompt template
+    const systemPromptTemplate = PromptTemplate.fromTemplate(`
+      You are a helpful assistant generating responses for a customer service ticket.
+      Use the following context to personalize your response:
+      Student Name: {studentName}
+      Recent Activity: {recentActivity}
+      Upcoming Events: {upcomingEvents}
+      Subject: {subject}
+      
+      Keep responses:
+      - Professional and empathetic
+      - Solution-focused
+      - Clear and concise
+      - Personalized to the student's context
+    `)
 
-      // Log successful response
-      await supabaseClient
-        .from('edge_function_logs')
-        .insert({
-          function_name: 'outreach-gpt',
-          response: completion
-        })
+    // Format the system prompt
+    const systemPrompt = await systemPromptTemplate.format({
+      studentName: context.studentName || 'the student',
+      recentActivity: context.recentActivity?.join(', ') || 'none provided',
+      upcomingEvents: context.upcomingEvents?.join(', ') || 'none provided',
+      subject: context.ticketSubject || 'general inquiry'
+    })
 
-      return new Response(
-        JSON.stringify({
-          message: 'OpenAI test successful',
-          response: completion.choices[0].message
-        }),
-        { 
-          status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
-      )
+    // Use LangChain's messaging system
+    const response = await chat.call([
+      new SystemMessage(systemPrompt),
+      new HumanMessage("Generate a helpful response for this ticket that addresses their needs and provides next steps.")
+    ])
 
-    } catch (error) {
-      // Log error
-      await supabaseClient
-        .from('edge_function_logs')
-        .insert({
-          function_name: 'outreach-gpt',
-          error: error.message
-        })
-
-      throw error
-    }
+    return new Response(
+      JSON.stringify({ response }),
+      { 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
+      },
+    )
 
   } catch (error) {
+    console.error('Error:', error)
     return new Response(
-      JSON.stringify({
-        error: 'Error testing OpenAI',
-        details: error.message
-      }),
+      JSON.stringify({ error: error.message }),
       { 
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }

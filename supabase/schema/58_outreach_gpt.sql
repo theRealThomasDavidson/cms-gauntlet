@@ -39,8 +39,8 @@ BEGIN
   SELECT net.http_post(
     'https://satkuhqfcnmonhxfdmiu.supabase.co/functions/v1/outreach-gpt',
     jsonb_build_object(
-      'template': template_record.prompt_template,
-      'context': p_context
+      'template', template_record.prompt_template,
+      'context', p_context
     ),
     headers := jsonb_build_object(
       'Authorization', 'Bearer ' || auth.jwt(),
@@ -123,6 +123,63 @@ BEGIN
   RETURN response.content::json;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Create function to handle OpenAI responses
+CREATE OR REPLACE FUNCTION handle_outreach_response(
+  p_ticket_id UUID,
+  p_response TEXT,
+  p_metadata JSONB DEFAULT '{}'::jsonb
+) RETURNS void AS $$
+BEGIN
+  -- Add to ticket history
+  INSERT INTO ticket_history (
+    ticket_id,
+    description,
+    changes,
+    created_by
+  ) VALUES (
+    p_ticket_id,
+    p_response,
+    jsonb_build_object(
+      'action', 'ai_response_added',
+      'metadata', p_metadata
+    ),
+    auth.uid()
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Grant execute permissions
+GRANT EXECUTE ON FUNCTION handle_outreach_response(UUID, TEXT, JSONB) TO authenticated;
+
+-- Create RPC function for outreach-gpt
+CREATE OR REPLACE FUNCTION invoke_outreach_gpt(
+  p_ticket_id UUID,
+  p_tone TEXT DEFAULT 'professional',
+  p_notes TEXT DEFAULT ''
+) RETURNS JSON AS $$
+DECLARE
+  response RECORD;
+BEGIN
+  SELECT net.http_post(
+    'https://satkuhqfcnmonhxfdmiu.supabase.co/functions/v1/outreach-gpt',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || auth.jwt(),
+      'Content-Type', 'application/json'
+    ),
+    body := jsonb_build_object(
+      'ticketId', p_ticket_id,
+      'tone', p_tone,
+      'speakerNotes', p_notes
+    )
+  ) INTO response;
+
+  RETURN response.content::json;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Grant execute permission for RPC
+GRANT EXECUTE ON FUNCTION invoke_outreach_gpt(UUID, TEXT, TEXT) TO authenticated;
 
 -- Grant permissions
 GRANT ALL ON TABLE outreach_templates TO authenticated;

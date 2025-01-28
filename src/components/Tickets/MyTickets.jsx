@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { ArrowRight } from 'lucide-react';
 import PropTypes from 'prop-types';
 
-const MyTickets = ({ onSelectTicket }) => {
+export function MyTickets({ onSelectTicket }) {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -73,10 +73,8 @@ const MyTickets = ({ onSelectTicket }) => {
       ))}
     </div>
   );
-};
+}
 
 MyTickets.propTypes = {
   onSelectTicket: PropTypes.func.isRequired
-};
-
-export default MyTickets; 
+}; 

@@ -365,4 +365,111 @@ begin
 end;
 $$ language plpgsql security definer;
 
-grant execute on function update_ticket_stage(uuid, uuid, text) to authenticated; 
+grant execute on function update_ticket_stage(uuid, uuid, text) to authenticated;
+
+-- Drop and recreate the function with simpler signature
+DROP FUNCTION IF EXISTS assign_ticket_to_workflow;
+
+CREATE OR REPLACE FUNCTION assign_ticket_to_workflow(
+  p_ticket_id UUID,
+  p_workflow_id UUID,
+  p_initial_stage_id UUID,
+  p_reason TEXT DEFAULT 'Manual workflow assignment',
+  p_title TEXT,
+  p_description TEXT DEFAULT '',
+  p_priority TEXT DEFAULT 'medium'
+) RETURNS void 
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_org_id UUID;
+  v_profile_id UUID;
+BEGIN
+  -- Get org_id and profile_id
+  SELECT org_id, id INTO v_org_id, v_profile_id
+  FROM profiles
+  WHERE auth_id = auth.uid();
+
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'User profile not found';
+  END IF;
+
+  -- Verify user has permission
+  IF NOT EXISTS (
+    SELECT 1 FROM tickets t
+    WHERE t.id = p_ticket_id  
+    AND t.org_id = v_org_id
+  ) THEN
+    RAISE EXCEPTION 'Permission denied';
+  END IF;
+
+  -- Update the ticket
+  UPDATE tickets t
+  SET 
+    workflow_id = p_workflow_id,
+    current_stage_id = p_initial_stage_id,
+    updated_at = NOW()
+  WHERE t.id = p_ticket_id;
+
+  -- Add history entry with all fields
+  INSERT INTO ticket_history (
+    ticket_id,
+    title,
+    description,
+    priority,
+    changes,
+    changed_by
+  ) VALUES (
+    p_ticket_id,
+    p_title,
+    p_description,
+    p_priority,
+    jsonb_build_object(
+      'action', 'workflow_assigned',
+      'workflow_id', p_workflow_id,
+      'initial_stage_id', p_initial_stage_id,
+      'reason', p_reason
+    ),
+    v_profile_id
+  );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant permissions
+GRANT EXECUTE ON FUNCTION assign_ticket_to_workflow(
+  UUID, UUID, UUID, TEXT, TEXT, TEXT, TEXT
+) TO authenticated;
+
+-- Add this function to help debug permissions
+CREATE OR REPLACE FUNCTION debug_ticket_permissions(p_ticket_id UUID) 
+RETURNS TABLE (
+  check_name TEXT,
+  has_permission BOOLEAN
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 'Can select ticket'::TEXT,
+    EXISTS (
+      SELECT 1 FROM tickets t
+      WHERE t.id = p_ticket_id
+      AND (SELECT org_id FROM profiles WHERE id = auth.uid()) = t.org_id
+    )
+  UNION ALL
+  SELECT 'Can update ticket',
+    EXISTS (
+      SELECT 1 FROM tickets t
+      WHERE t.id = p_ticket_id
+      AND (SELECT org_id FROM profiles WHERE id = auth.uid()) = t.org_id
+    )
+  UNION ALL
+  SELECT 'Can insert history',
+    EXISTS (
+      SELECT 1 FROM tickets t
+      WHERE t.id = p_ticket_id
+      AND (SELECT org_id FROM profiles WHERE id = auth.uid()) = t.org_id
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION debug_ticket_permissions(UUID) TO authenticated; 

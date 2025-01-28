@@ -15,12 +15,21 @@
 - [x] Add CORS handling
 - [x] Add shared CORS module
 - [x] Deploy function
-- [ ] Add OpenAI/Claude integration
+- [x] Add LangChain Integration
   - [x] Add API key to .env
   - [x] Set up secret in Supabase
-  - [x] Configure API client
-  - [x] Test basic completion
-  - [ ] Configure prompt templates
+  - [x] Set up LangChain basics
+    - [x] Import ChatOpenAI from LangChain
+    - [x] Import PromptTemplate
+    - [x] Basic message chain setup
+  - [ ] Implement LangChain features
+    - [x] Set up proper prompt templates
+      - [x] Define system message template
+      - [x] Define user message template
+      - [x] Test template variables
+    - [ ] Add structured output (optional)
+    - [ ] Add conversation memory (optional)
+    - [ ] Add knowledge base (optional)
 - [x] Add error handling
   - [x] Handle API errors
   - [x] Handle context validation

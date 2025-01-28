@@ -60,7 +60,7 @@ create table tickets (
 create table ticket_history (
   id uuid primary key default uuid_generate_v4(),
   ticket_id uuid references tickets(id) on delete cascade not null,
-  title text not null,
+  title text,
   description text,
   priority ticket_priority not null default 'low',
   assigned_to uuid references profiles(id),
@@ -1054,4 +1054,48 @@ $$ language plpgsql;
 -- Grant execute permissions
 grant execute on function get_agent_tickets(uuid, ticket_priority, uuid, uuid) to authenticated;
 grant execute on function get_customer_tickets() to authenticated;
-grant execute on function get_workflow_stage_stats(uuid) to authenticated; 
+grant execute on function get_workflow_stage_stats(uuid) to authenticated;
+
+-- After the table definitions, add these grants
+GRANT SELECT, UPDATE ON tickets TO authenticated;
+GRANT SELECT ON workflow_stages TO authenticated;
+GRANT INSERT ON ticket_history TO authenticated;
+
+-- If using RLS (Row Level Security), also add policies
+ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
+
+-- Policy for viewing tickets
+CREATE POLICY "Users can view tickets in their org" ON tickets
+  FOR SELECT USING (
+    org_id IN (
+      SELECT org_id FROM profiles
+      WHERE id = auth.uid()
+    )
+  );
+
+-- Policy for updating tickets
+CREATE POLICY "Users can update tickets in their org" ON tickets
+  FOR UPDATE USING (
+    org_id IN (
+      SELECT org_id FROM profiles
+      WHERE id = auth.uid()
+    )
+  );
+
+-- Add these policies
+CREATE POLICY "Users can update tickets in their org" ON tickets
+  FOR UPDATE USING (
+    org_id IN (
+      SELECT org_id FROM profiles
+      WHERE id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert ticket history" ON ticket_history
+  FOR INSERT WITH CHECK (
+    ticket_id IN (
+      SELECT t.id FROM tickets t
+      JOIN profiles p ON p.org_id = t.org_id
+      WHERE p.id = auth.uid()
+    )
+  ); 

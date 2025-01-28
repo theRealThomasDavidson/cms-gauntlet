@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import PropTypes from 'prop-types';
 
-const TicketHistory = ({ ticketId }) => {
+export function TicketHistory({ ticketId }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -113,10 +113,9 @@ const TicketHistory = ({ ticketId }) => {
       </div>
     </div>
   );
-};
+}
 
 TicketHistory.propTypes = {
   ticketId: PropTypes.string.isRequired
-};
-
-export default TicketHistory; 
+}; 
+export default TicketHistory;

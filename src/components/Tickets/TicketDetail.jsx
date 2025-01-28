@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import PropTypes from 'prop-types';
-import TicketHistory from './TicketHistory';
+import { TicketHistory } from './TicketHistory';
 
-const TicketDetail = ({ ticketId, onBack }) => {
+export function TicketDetail({ ticketId, onBack }) {
   const [ticket, setTicket] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -73,11 +73,9 @@ const TicketDetail = ({ ticketId, onBack }) => {
       <TicketHistory ticketId={ticketId} />
     </div>
   );
-};
+}
 
 TicketDetail.propTypes = {
   ticketId: PropTypes.string.isRequired,
   onBack: PropTypes.func.isRequired
-};
-
-export default TicketDetail; 
+}; 

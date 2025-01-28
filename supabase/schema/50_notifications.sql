@@ -423,7 +423,7 @@ begin
   join organizations org on org.id = t.org_id
   left join workflow_stages old_stage on old_stage.id = OLD.current_stage_id
   left join workflow_stages new_stage on new_stage.id = NEW.current_stage_id
-  where t.ticket_id = NEW.ticket_id;
+  where t.id = NEW.id;
 
   v_org_id := v_ticket.org_id;
   v_old_stage := v_ticket.old_stage_name;
@@ -457,7 +457,7 @@ begin
 
     -- Create notification for each recipient
     for v_recipient_id in
-      select recipient_id from get_notification_recipients(NEW.ticket_id, v_rule.id)
+      select recipient_id from get_notification_recipients(NEW.id, v_rule.id)
     loop
       insert into notification_logs (
         org_id,
@@ -473,7 +473,7 @@ begin
         v_org_id,
         v_rule.id,
         v_template.id,
-        NEW.ticket_id,
+        NEW.id,
         v_recipient_id,
         'ticket_stage_changed',
         replace(
@@ -705,7 +705,7 @@ begin
   select 
     t.org_id,
     null,
-    NEW.ticket_id,
+    NEW.id,
     case 
       when h.config->>'target_type' = 'specific_user' then (h.config->>'target_user_id')::uuid
       else null
@@ -721,10 +721,10 @@ begin
     jsonb_build_object(
       'hook_id', h.id,
       'stage_id', NEW.workflow_stage_id,
-      'previous_stage_id', OLD.workflow_stage_id
+      'previous_stage_id', (NEW.changes->>'previous_stage_id')::uuid
     )
   from workflow_stage_hooks h
-  join tickets t on t.id = NEW.ticket_id
+  join tickets t on t.id = NEW.id
   where h.stage_id = NEW.workflow_stage_id
   and h.hook_type = 'notification'
   and h.is_active = true;

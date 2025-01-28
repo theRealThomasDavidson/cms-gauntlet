@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import { Plus, ChevronDown, X } from 'lucide-react';
+import { Plus, ChevronDown, X, Sparkles } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { getTicketById } from '../../lib/api/tickets';
+import { MessagePreviewDialog } from '../Tickets/MessagePreviewDialog';
 
 export default function KanbanBoard({ workflowId, profile }) {
   const [stages, setStages] = useState([]);
@@ -13,6 +14,8 @@ export default function KanbanBoard({ workflowId, profile }) {
   const [showCommentDialog, setShowCommentDialog] = useState(false);
   const [transitionComment, setTransitionComment] = useState('');
   const [pendingTransition, setPendingTransition] = useState(null);
+  const [showMessageDialog, setShowMessageDialog] = useState(false);
+  const [selectedTicket, setSelectedTicket] = useState(null);
 
   useEffect(() => {
     if (workflowId) {
@@ -163,6 +166,20 @@ export default function KanbanBoard({ workflowId, profile }) {
                             <span>Assigned to: {ticket.assigned_to_name}</span>
                           )}
                         </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setShowMessageDialog(true)
+                            setSelectedTicket({
+                              ...ticket,
+                              currentStageId: stage.id
+                            })
+                          }}
+                          className="mt-2 text-xs flex items-center text-blue-600 hover:text-blue-700"
+                        >
+                          <Sparkles className="h-3 w-3 mr-1" />
+                          Generate Response
+                        </button>
                       </div>
                       <div className="relative">
                         <select
@@ -238,6 +255,54 @@ export default function KanbanBoard({ workflowId, profile }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add Message Preview Dialog */}
+      {showMessageDialog && selectedTicket && (
+        <MessagePreviewDialog
+          isOpen={showMessageDialog}
+          onClose={() => {
+            setShowMessageDialog(false)
+            setSelectedTicket(null)
+          }}
+          onConfirm={async (message, newStageId) => {
+            try {
+              // First update the message
+              const { error: messageError } = await supabase.rpc('update_ticket_data', {
+                p_ticket_id: selectedTicket.id,
+                p_description: message,
+                p_change_reason: 'AI response added'
+              })
+              if (messageError) throw messageError
+
+              // Then update the stage if it changed
+              if (newStageId && newStageId !== selectedTicket.currentStageId) {
+                const { error: stageError } = await supabase.rpc('update_ticket_stage', {
+                  p_ticket_id: selectedTicket.id,
+                  p_stage_id: newStageId,
+                  p_change_reason: 'Stage updated with AI response'
+                })
+                if (stageError) throw stageError
+              }
+
+              await fetchStagesAndTickets() // Refresh the board
+            } catch (err) {
+              console.error('Error updating ticket:', err)
+            }
+            setShowMessageDialog(false)
+            setSelectedTicket(null)
+          }}
+          ticketContext={{
+            title: selectedTicket.title,
+            description: selectedTicket.description,
+            currentStageId: selectedTicket.currentStageId,
+            stages: stages,  // Pass all available stages
+            knowledgeKeywords: [],
+            customerInfo: {}
+          }}
+          generatedMessage=""
+          isLoading={false}
+        />
       )}
     </div>
   );

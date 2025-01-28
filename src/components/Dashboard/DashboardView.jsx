@@ -2,15 +2,6 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import ProfileView from './ProfileView'
 
-// Debug imports
-console.log('Imports loaded in DashboardView:', {
-  supabase,
-  ProfileView
-})
-
-// Add error boundary logging
-console.log('DashboardView imports loaded:', { supabase, ProfileView })
-
 export default function DashboardView() {
   const [needsSetup, setNeedsSetup] = useState(false)
   const [error, setError] = useState(null)
