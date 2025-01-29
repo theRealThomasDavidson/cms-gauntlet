@@ -122,9 +122,32 @@ serve(async (req) => {
       new HumanMessage("Generate a helpful response for this ticket that addresses their needs and provides next steps.")
     ])
 
+    // Get stage recommendation
+    const stageAnalysisPrompt = `Given this customer service response:
+    "{previousResponse}"
+
+    And these available stages:
+    ${context.workflow.allStages.map(stage => 
+      `- ${stage.name}${stage.is_start ? ' (start)' : ''}${stage.is_end ? ' (end)' : ''}`
+    ).join('\n')}
+
+    Current stage: ${context.workflow.currentStage.name}
+
+    Provide ONLY the name of the stage we should be in after this response. 
+    Use EXACTLY one of the stage names listed above.
+    Do not provide explanation or additional text.`;
+
+    const stageRecommendation = await chat.call([
+      new SystemMessage(stageAnalysisPrompt
+        .replace("{previousResponse}", response.content)
+      ),
+      new HumanMessage("What stage should this ticket be in?(please only say the stage name and nothing else)")
+    ]);
+
     return new Response(
       JSON.stringify({ 
         response,
+        stageRecommendation,
         debug: {
           historyCount: context.ticketHistory?.length,
           currentStage: context.workflow.currentStage,
@@ -169,4 +192,49 @@ const sampleContext = {
       change: "new → open"
     }
   ]
-} 
+}
+
+const messagePrompt = `You are a helpful CRM assistant for a canoe company. 
+Your task is to help manage customer interactions and suggest appropriate workflow stages.
+
+Current workflow stages available:
+- New Ticket (start)
+- Triage Damage
+- Complete (end)
+
+For each response:
+1. Generate a helpful message for the customer
+2. End your message with one of these transition phrases:
+   - "We'll stay in the current stage because..." (if staying)
+   - "We'll move on to <stage_name> because..." (if moving)
+
+Format your response as:
+---
+MESSAGE: Your message to the customer...
+
+[Your transition phrase explaining the stage decision]
+
+Best regards,
+Otto - Sales Specialist
+---`;
+
+const stageAnalysisPrompt = `Given this customer service response:
+"{previousResponse}"
+
+And these available stages:
+- New Ticket (start)
+- Triage Damage
+- Complete (end)
+
+Current stage: {currentStage}
+
+Provide ONLY the name of the stage we should be in after this response. 
+Use EXACTLY one of the stage names listed above.
+Do not provide explanation or additional text.`;
+
+const userPrompt = `Context:
+Current Stage: {currentStage}
+Customer Name: {customerName}
+Previous Messages: {previousMessages}
+
+Generate a response with a stage transition explanation.`; 
