@@ -46,21 +46,41 @@ export function TicketView({ ticket }: TicketViewProps) {
     try {
       setIsGenerating(true)
       setError(null)
+      setGenerationStep('Preparing context...')
       
+      console.log('Raw history:', ticket.history) // Debug log
+
+      // Simpler filtering first
+      const filteredHistory = ticket.history?.filter(h => {
+        const isStageChange = h.changes.action === 'stage_change'
+        const hasDescription = (h.description || '').trim() !== ''
+        console.log('Entry:', { 
+          action: h.changes.action, 
+          desc: h.description,
+          isStageChange,
+          hasDescription,
+          keep: !isStageChange && hasDescription
+        }) // Debug log
+        return !isStageChange && hasDescription
+      }).map(h => ({
+        description: h.description,
+        action: h.changes.action,
+        timestamp: h.changed_at,
+        change: h.changes.from ? `${h.changes.from} → ${h.changes.to}` : undefined
+      }));
+
+      console.log('Filtered history:', filteredHistory) // Debug log
+
       const context = {
         customerName: ticket.customer?.full_name || ticket.customer?.username,
         ticketTitle: ticket.title,
         ticketDescription: ticket.description,
         ticketPriority: ticket.priority,
         ticketStatus: ticket.status,
-        ticketHistory: ticket.history?.map(h => ({
-          description: h.description,
-          action: h.changes.action,
-          timestamp: h.changed_at,
-          change: h.changes.from ? `${h.changes.from} → ${h.changes.to}` : undefined
-        }))
+        ticketHistory: filteredHistory || [] // Ensure it's never undefined
       }
 
+      setGenerationStep('Sending to AI service...')
       console.log('Sending context:', context)
 
       const { data, error } = await supabase.functions.invoke('outreach-gpt', {
