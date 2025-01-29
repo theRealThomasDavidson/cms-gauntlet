@@ -4,7 +4,7 @@ import { X } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 
-export default function AssignWorkflowModal({ ticket, onClose, onAssigned }) {
+export function AssignWorkflowModal({ ticket, onClose, onAssigned, profile }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -51,28 +51,32 @@ export default function AssignWorkflowModal({ ticket, onClose, onAssigned }) {
     }
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!selectedWorkflow || !selectedStage) return;
-
-    setLoading(true);
-    setError(null);
-
+  async function handleAssign() {
     try {
-      const { error } = await supabase.rpc('assign_ticket_to_workflow', {
+      setLoading(true);
+      setError(null);
+
+      const { data, error } = await supabase.rpc('assign_ticket_to_workflow', {
         p_ticket_id: ticket.id,
         p_workflow_id: selectedWorkflow,
         p_initial_stage_id: selectedStage,
         p_reason: 'Manual workflow assignment'
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Detailed error:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        throw error;
+      }
+
       onAssigned();
-      // Navigate to the Kanban board view for this workflow
       navigate(`/workflows/${selectedWorkflow}/kanban`);
     } catch (err) {
-      setError(err.message || 'Failed to assign workflow');
       console.error('Error assigning workflow:', err);
+      setError(err.message || 'Failed to assign workflow');
     } finally {
       setLoading(false);
     }
@@ -96,7 +100,7 @@ export default function AssignWorkflowModal({ ticket, onClose, onAssigned }) {
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleAssign} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">Select Workflow</label>
             <select
@@ -166,5 +170,6 @@ AssignWorkflowModal.propTypes = {
     description: PropTypes.string
   }).isRequired,
   onClose: PropTypes.func.isRequired,
-  onAssigned: PropTypes.func.isRequired
+  onAssigned: PropTypes.func.isRequired,
+  profile: PropTypes.object.isRequired
 }; 

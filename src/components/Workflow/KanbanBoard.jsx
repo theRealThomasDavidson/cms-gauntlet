@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import { Plus, ChevronDown, X } from 'lucide-react';
+import { Plus, ChevronDown, X, Sparkles } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { getTicketById } from '../../lib/api/tickets';
+import { MessagePreviewDialog } from '../Tickets/MessagePreviewDialog';
 
 export default function KanbanBoard({ workflowId, profile }) {
   const [stages, setStages] = useState([]);
@@ -13,6 +14,53 @@ export default function KanbanBoard({ workflowId, profile }) {
   const [showCommentDialog, setShowCommentDialog] = useState(false);
   const [transitionComment, setTransitionComment] = useState('');
   const [pendingTransition, setPendingTransition] = useState(null);
+  const [showMessageDialog, setShowMessageDialog] = useState(false);
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [generatingMessage, setGeneratingMessage] = useState(false);
+  const [generatedMessage, setGeneratedMessage] = useState('');
+  const [generationStep, setGenerationStep] = useState('');
+
+  // Add knowledgeBase constant
+  const knowledgeBase = {
+    articles: [
+      {
+        title: "Canoe Pricing Guide",
+        content: `# Comprehensive Canoe Pricing Guide
+
+## Base Pricing By Material (Length-Based)
+### Aluminum ($30/ft)
+- 10ft: $300 base
+- 14ft: $420 base
+- 18ft: $540 base
+- 20ft: $600 base
+
+### Fiberglass ($25/ft)
+- 10ft: $250 base
+- 14ft: $350 base
+- 18ft: $450 base
+(Not available in 20ft)
+
+### Wood ($70/ft)
+- 10ft: $700 base
+- 14ft: $980 base
+- 18ft: $1,260 base
+- 20ft: $1,400 base`
+      },
+      {
+        title: "Canoe Specifications",
+        content: `# Detailed Canoe Specifications
+
+## Material Characteristics
+### Aluminum
+- Hull thickness: 0.080 inches
+- Marine-grade aluminum alloy
+- Maintenance: Low
+- Durability: High
+- Weight: Medium (65-85 lbs)
+- Best for: Durability, low maintenance`
+      }
+    ]
+  };
 
   useEffect(() => {
     if (workflowId) {
@@ -55,57 +103,6 @@ export default function KanbanBoard({ workflowId, profile }) {
     }
   }
 
-  function handleStageChangeStart(ticketId, newStageId) {
-    setPendingTransition({ ticketId, newStageId });
-    setShowCommentDialog(true);
-  }
-
-  async function handleStageChange(comment = '') {
-    if (!pendingTransition) return;
-    
-    try {
-      setMovingTicket(pendingTransition.ticketId);
-
-      // Get current ticket data
-      const { data: currentTicket, error: fetchError } = await getTicketById(pendingTransition.ticketId);
-
-      if (fetchError) throw fetchError;
-
-      // Update ticket data with stage change
-      const { error: updateError } = await supabase.rpc('update_ticket_data', {
-        p_ticket_id: pendingTransition.ticketId,
-        p_title: currentTicket.title,
-        p_description: currentTicket.description,
-        p_status: currentTicket.status || 'open',
-        p_priority: currentTicket.priority,
-        p_assigned_to: currentTicket.assigned_to,
-        p_change_reason: comment || 'Stage changed'
-      });
-
-      if (updateError) throw updateError;
-
-      // Update the stage using RPC function
-      const { error: stageError } = await supabase
-        .rpc('update_ticket_stage', {
-          p_ticket_id: pendingTransition.ticketId,
-          p_stage_id: pendingTransition.newStageId,
-          p_change_reason: comment || 'Stage changed'
-        });
-
-      if (stageError) throw stageError;
-
-      await fetchStagesAndTickets(); // Refresh the board
-      setShowCommentDialog(false);
-      setTransitionComment('');
-      setPendingTransition(null);
-    } catch (err) {
-      console.error('Error moving ticket:', err);
-      // You might want to show a toast notification here
-    } finally {
-      setMovingTicket(null);
-    }
-  }
-
   const getStageHeaderColor = (index) => {
     const colors = [
       'bg-pink-100 border-pink-200',
@@ -113,6 +110,94 @@ export default function KanbanBoard({ workflowId, profile }) {
     ];
     return colors[index % colors.length];
   };
+
+  function openMessageDialog(ticket, stageId) {
+    setShowMessageDialog(true);
+    setSelectedTicket({
+      ...ticket,
+      currentStageId: stageId
+    });
+    setGeneratedMessage('');
+    setGenerationStep('');
+  }
+
+  async function generateAIResponse(ticket) {
+    setGeneratingMessage(true);
+    setGenerationStep('Preparing context...');
+    try {
+      // Fetch ticket history using RPC
+      const { data: ticketHistory, error: historyError } = await supabase
+        .rpc('get_ticket_history', {
+          p_ticket_id: ticket.id
+        });
+
+      if (historyError) {
+        console.error('Error fetching ticket history:', historyError);
+      }
+
+      // Find current stage info
+      const currentStage = stages.find(s => s.id === ticket.current_stage_id);
+
+      // Prepare context object
+      const requestBody = {
+        context: {
+          customerName: ticket.assigned_to_name || 'Customer',
+          ticketTitle: ticket.title,
+          ticketDescription: ticket.description,
+          ticketPriority: ticket.priority,
+          ticketStatus: ticket.status || 'open',
+          ticketHistory: ticketHistory || [],
+          workflow: {
+            name: ticket.workflow_name,
+            currentStage: {
+              name: currentStage?.name || 'Unknown',
+              description: currentStage?.description || '',
+            },
+            allStages: stages.map(stage => ({
+              name: stage.name,
+              description: stage.description
+            }))
+          },
+          knowledgeBase: knowledgeBase.articles
+        }
+      };
+
+      setGenerationStep('Connecting to AI service...');
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/outreach-gpt`;
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const data = await response.json();
+      setGenerationStep('Finalizing response...');
+      
+      if (data.response?.kwargs?.content) {
+        setGeneratedMessage(data.response.kwargs.content);
+      } else {
+        console.error('Unexpected response format:', data);
+        setGeneratedMessage('Error: Unexpected response format');
+      }
+
+    } catch (err) {
+      console.error('Error generating message:', err);
+      setGeneratedMessage('Error generating response. Please try again.');
+    } finally {
+      setGeneratingMessage(false);
+    }
+  }
+
+  async function generateAndOpenDialog(ticket, stageId) {
+    // Open dialog first
+    openMessageDialog(ticket, stageId);
+    // Then generate AI response
+    await generateAIResponse(ticket);
+  }
 
   if (loading) return <div>Loading kanban board...</div>;
   if (error) return <div className="text-red-500">{error}</div>;
@@ -163,21 +248,25 @@ export default function KanbanBoard({ workflowId, profile }) {
                             <span>Assigned to: {ticket.assigned_to_name}</span>
                           )}
                         </div>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await generateAndOpenDialog(ticket, stage.id);
+                          }}
+                          className="mt-2 text-xs flex items-center text-blue-600 hover:text-blue-700"
+                        >
+                          <Sparkles className="h-3 w-3 mr-1" />
+                          Generate Response
+                        </button>
                       </div>
                       <div className="relative">
-                        <select
-                          onChange={(e) => handleStageChangeStart(ticket.id, e.target.value)}
-                          value={stage.id}
-                          disabled={movingTicket === ticket.id}
-                          className="appearance-none bg-transparent pr-6 py-1 pl-2 text-sm border rounded hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                        <button
+                          onClick={() => openMessageDialog(ticket, stage.id)}
+                          className="text-xs flex items-center text-gray-600 hover:text-gray-700 border rounded px-2 py-1 hover:bg-gray-50"
                         >
-                          {stages.map(s => (
-                            <option key={s.id} value={s.id}>
-                              Move to {s.name}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500" />
+                          <ChevronDown size={14} className="mr-1" />
+                          Move Ticket
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -195,49 +284,97 @@ export default function KanbanBoard({ workflowId, profile }) {
         ))}
       </div>
 
-      {/* Comment Dialog */}
-      {showCommentDialog && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Add Transition Comment</h3>
-              <button 
-                onClick={() => {
-                  setShowCommentDialog(false);
-                  setPendingTransition(null);
-                  setTransitionComment('');
-                }}
-                className="p-2 hover:bg-gray-100 rounded-full"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <textarea
-              value={transitionComment}
-              onChange={(e) => setTransitionComment(e.target.value)}
-              placeholder="Why is this ticket being moved? (Optional)"
-              className="w-full p-2 border rounded-lg mb-4 h-32 resize-none"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  setShowCommentDialog(false);
-                  setPendingTransition(null);
-                  setTransitionComment('');
-                }}
-                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleStageChange(transitionComment)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                Move Ticket
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Add Message Preview Dialog */}
+      {showMessageDialog && selectedTicket && (
+        <MessagePreviewDialog
+          isOpen={showMessageDialog}
+          onClose={() => {
+            setShowMessageDialog(false);
+            setSelectedTicket(null);
+            setGeneratedMessage('');
+            setGenerationStep('');
+          }}
+          onConfirm={async (message, newStageId) => {
+            try {
+              // First update the message with all required fields
+              const { error: messageError } = await supabase.rpc('update_ticket_data', {
+                p_ticket_id: selectedTicket.id,
+                p_title: selectedTicket.title,
+                p_description: message || selectedTicket.description,
+                p_status: selectedTicket.status || 'open',
+                p_priority: selectedTicket.priority || 'medium',
+                p_assigned_to: selectedTicket.assigned_to,
+                p_change_reason: message ? 'Response added' : 'Stage changed'
+              });
+
+              if (messageError) throw messageError;
+
+              // Create notification if there's a message
+              if (message) {
+                const { error: notificationError } = await supabase.rpc('create_notification', {
+                  p_user_id: selectedTicket.created_by,
+                  p_type: 'ticket_update',
+                  p_title: 'Response Added to Your Ticket',
+                  p_description: `A response has been added to your ticket: ${selectedTicket.title}`,
+                  p_metadata: JSON.stringify({
+                    ticket_id: selectedTicket.id,
+                    action: 'response_added',
+                    workflow_id: selectedTicket.workflow_id
+                  })
+                });
+
+                if (notificationError) {
+                  console.error('Error creating notification:', notificationError);
+                }
+              }
+
+              // Then update the stage if it changed
+              if (newStageId && newStageId !== selectedTicket.currentStageId) {
+                const { error: stageError } = await supabase.rpc('update_ticket_stage', {
+                  p_ticket_id: selectedTicket.id,
+                  p_stage_id: newStageId,
+                  p_change_reason: message ? 'Stage updated with response' : 'Stage changed'
+                });
+                if (stageError) throw stageError;
+
+                // Create stage change notification
+                const { error: stageNotificationError } = await supabase.rpc('create_notification', {
+                  p_user_id: selectedTicket.created_by,
+                  p_type: 'ticket_stage_change',
+                  p_title: 'Ticket Stage Updated',
+                  p_description: `Your ticket "${selectedTicket.title}" has been moved to a new stage`,
+                  p_metadata: JSON.stringify({
+                    ticket_id: selectedTicket.id,
+                    action: 'stage_change',
+                    workflow_id: selectedTicket.workflow_id,
+                    new_stage_id: newStageId
+                  })
+                });
+
+                if (stageNotificationError) {
+                  console.error('Error creating stage change notification:', stageNotificationError);
+                }
+              }
+
+              await fetchStagesAndTickets(); // Refresh the board
+            } catch (err) {
+              console.error('Error updating ticket:', err);
+            }
+            setShowMessageDialog(false);
+            setSelectedTicket(null);
+          }}
+          ticketContext={{
+            title: selectedTicket.title,
+            description: selectedTicket.description,
+            currentStageId: selectedTicket.currentStageId,
+            stages: stages,
+            knowledgeKeywords: [],
+            customerInfo: {}
+          }}
+          generatedMessage={generatedMessage}
+          isLoading={generatingMessage}
+          loadingStep={generationStep}
+        />
       )}
     </div>
   );

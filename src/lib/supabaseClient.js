@@ -35,4 +35,13 @@ export async function ensureDefaultOrg() {
   const { data, error } = await supabase.rpc('get_or_create_default_org')
   if (error) return null
   return data
+}
+
+// Function to invoke Edge Functions
+export async function invokeFunction(functionName, payload) {
+  const { data, error } = await supabase.functions.invoke(functionName, {
+    body: payload
+  })
+  if (error) throw error
+  return data
 } 

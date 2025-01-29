@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import PropTypes from 'prop-types';
 
-export default function AssignedUserDisplay({ userId }) {
+export function AssignedUserDisplay({ userId }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

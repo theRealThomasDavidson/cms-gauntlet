@@ -14,6 +14,10 @@ create table organizations (
 -- Enable RLS
 alter table organizations enable row level security;
 
+-- Drop existing policies
+drop policy if exists "Allow public viewing of organizations" on organizations;
+drop policy if exists "Allow organization management by admins" on organizations;
+
 -- Create indexes
 create index organizations_name_idx on organizations(name);
 
@@ -22,11 +26,16 @@ create policy "allow function to create organizations"
   on organizations for insert
   with check (true);
 
--- Allow authenticated users to view organizations
-create policy "authenticated users can view organizations"
+-- Allow anyone to view organizations
+create policy "anyone can view organizations"
   on organizations for select
-  to authenticated
   using (true);
+
+-- Only admins can modify organizations
+create policy "Allow organization management by admins"
+  on organizations for all using (
+    auth.jwt() ->> 'role' = 'admin'
+  );
 
 -- Function to get or create default org
 create or replace function get_or_create_default_org()
@@ -54,5 +63,8 @@ begin
   return default_org_id;
 end;
 $$;
+
+-- Grant execute permission on get_or_create_default_org
+grant execute on function get_or_create_default_org() to authenticated;
 
 -- Note: The admin policy will be added in 2_user_profiles.sql after the profiles table exists 

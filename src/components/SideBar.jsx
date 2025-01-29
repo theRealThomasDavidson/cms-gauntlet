@@ -1,13 +1,54 @@
 import { Button } from './ui/button'
-import { Workflow, Ticket, BookOpen, UserCircle, Bell } from 'lucide-react'
+import { Workflow, Ticket, BookOpen, UserCircle, Bell, Terminal } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { auth } from '../lib/api'
 import { supabase } from '../lib/supabaseClient'
 import PropTypes from 'prop-types'
+import { useNotifications } from '../context/NotificationContext'
 
 export default function SideBar({ setActiveComponent, onWorkflowAction }) {
   const [userRole, setUserRole] = useState(null)
-  const [unreadCount, setUnreadCount] = useState(0)
+  const { unreadCount } = useNotifications()
+
+  const callTestSecret = async () => {
+    try {
+      // Call edge function directly instead of using RPC
+      const { data, error } = await supabase.functions.invoke('test-secret', {
+        // Can add body here if needed
+      })
+      
+      // Log the response to our table
+      const { error: logError } = await supabase
+        .from('edge_function_logs')
+        .insert({
+          function_name: 'test-secret',
+          response: data || null,
+          error: error?.message || null
+        })
+
+      if (error) throw error
+      if (logError) console.error('Error logging response:', logError)
+      
+      alert(JSON.stringify(data, null, 2))
+    } catch (error) {
+      console.error('Error calling test secret:', error)
+      alert('Error calling test secret. Check console for details.')
+    }
+  }
+
+  const testOutreachGPT = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('outreach-gpt')
+      
+      if (error) throw error
+      
+      console.log('OutreachGPT Test Response:', data)
+      alert(JSON.stringify(data, null, 2))
+    } catch (error) {
+      console.error('Error testing OutreachGPT:', error)
+      alert('Error testing OutreachGPT. Check console for details.')
+    }
+  }
 
   useEffect(() => {
     let mounted = true
@@ -109,6 +150,15 @@ export default function SideBar({ setActiveComponent, onWorkflowAction }) {
       zIndex: 10
     }}>
       <nav className="space-y-2 p-4">
+        {/* Test Edge Function - For all users */}
+        <Button 
+          onClick={testOutreachGPT}
+          className="w-full justify-start bg-purple-600 hover:bg-purple-700 text-white"
+        >
+          <Terminal className="h-4 w-4 mr-2" />
+          Test OutreachGPT
+        </Button>
+
         {/* Notifications - For all users */}
         <div className="relative inline-block w-full">
           <Button 

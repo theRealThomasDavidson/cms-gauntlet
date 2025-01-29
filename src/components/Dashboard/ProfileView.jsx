@@ -6,12 +6,12 @@ import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card'
 import { Pencil, Save, X, Plus, UserPlus, Search, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
+import PropTypes from 'prop-types'
 
-export default function ProfileView() {
-  const [loading, setLoading] = useState(true)
+export default function ProfileView({ profile: initialProfile }) {
   const [error, setError] = useState(null)
-  const [profile, setProfile] = useState(null)
-  const [isAdmin, setIsAdmin] = useState(false)
+  const [profile, setProfile] = useState(initialProfile)
+  const [isAdmin, setIsAdmin] = useState(initialProfile?.role === 'admin')
   const [allProfiles, setAllProfiles] = useState([])
   const [editingProfile, setEditingProfile] = useState(null)
   const [expandedProfile, setExpandedProfile] = useState(null)
@@ -41,88 +41,23 @@ export default function ProfileView() {
   })
 
   useEffect(() => {
-    loadProfile()
-  }, [])
+    if (isAdmin) {
+      loadOtherProfiles()
+    }
+  }, [isAdmin])
 
-  const loadProfile = async () => {
+  const loadOtherProfiles = async () => {
     try {
-      setLoading(true)
       setError(null)
-
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('No user found')
-
-      // Get visible profiles using our new function
       const profiles = await getVisibleProfiles()
-      
-      // First profile is always the current user
-      const currentProfile = profiles[0]
-      setProfile(currentProfile)
-      
-      // Set isAdmin based on the user's role
-      setIsAdmin(currentProfile.role === 'admin')
-      setAllProfiles(profiles)
-
-      // Calculate pagination
-      setTotalPages(Math.ceil(profiles.length / ITEMS_PER_PAGE))
-      
+      const otherProfiles = profiles.filter(p => p.id !== profile.id)
+      setAllProfiles(otherProfiles)
+      setTotalPages(Math.ceil(otherProfiles.length / ITEMS_PER_PAGE))
     } catch (error) {
-      console.error('Error loading profile:', error)
+      console.error('Error loading profiles:', error)
       setError(error.message)
-    } finally {
-      setLoading(false)
     }
   }
-
-  const loadProfiles = async () => {
-    try {
-      // Get all visible profiles using our RPC function
-      const profiles = await getVisibleProfiles()
-      
-      // Filter profiles if search query exists
-      let filteredProfiles = profiles
-      if (searchQuery) {
-        const searchLower = searchQuery.toLowerCase()
-        filteredProfiles = profiles.filter(profile => 
-          profile.username?.toLowerCase().includes(searchLower) ||
-          profile.name?.toLowerCase().includes(searchLower) ||
-          profile.email?.toLowerCase().includes(searchLower)
-        )
-      }
-
-      // Calculate pagination
-      setTotalPages(Math.ceil(filteredProfiles.length / ITEMS_PER_PAGE))
-
-      // Get paginated results
-      const paginatedProfiles = filteredProfiles.slice(
-        page * ITEMS_PER_PAGE, 
-        (page + 1) * ITEMS_PER_PAGE
-      )
-
-      setAllProfiles(paginatedProfiles)
-    } catch (err) {
-      console.error('Error loading profiles:', err)
-      setError(err.message)
-    }
-  }
-
-  useEffect(() => {
-    if (isAdmin) {
-      const timer = setTimeout(() => {
-        setPage(0) // Reset to first page on new search
-        loadProfiles()
-      }, 300) // Debounce search
-
-      return () => clearTimeout(timer)
-    }
-  }, [searchQuery])
-
-  useEffect(() => {
-    if (isAdmin) {
-      loadProfiles()
-    }
-  }, [page])
 
   const handleRoleChange = async (email, newRole) => {
     try {
@@ -131,7 +66,7 @@ export default function ProfileView() {
         new_role: newRole
       })
       if (error) throw error
-      await loadProfile() // Reload profiles
+      await loadOtherProfiles() // Reload profiles
     } catch (err) {
       setError(err.message)
     }
@@ -168,7 +103,7 @@ export default function ProfileView() {
 
       if (error) throw error
       
-      await loadProfile() // Reload all profiles
+      await loadOtherProfiles() // Reload all profiles
       handleCancelEdit()
     } catch (err) {
       setError(err.message)
@@ -212,7 +147,7 @@ export default function ProfileView() {
         password: ''
       })
       setShowCreateForm(false)
-      await loadProfile()
+      await loadOtherProfiles()
     } catch (err) {
       setCreateError(err.message)
     }
@@ -250,7 +185,7 @@ export default function ProfileView() {
         window.location.href = '/login'
       } else {
         // If admin deleting someone else, just refresh the list
-        await loadProfile()
+        await loadOtherProfiles()
       }
 
       setDeleteConfirm(null)
@@ -274,13 +209,15 @@ export default function ProfileView() {
       if (error) throw error
       
       setIsFirstSignIn(false)
-      await loadProfile()
+      await loadOtherProfiles()
     } catch (err) {
       setError(err.message)
     }
   }
 
   const renderProfileCard = (p) => {
+    if (!p) return null;
+    
     const isEditing = editingProfile === p.id
     const isExpanded = expandedProfile === p.id
 
@@ -403,7 +340,6 @@ export default function ProfileView() {
     )
   }
 
-  if (loading) return <div>Loading...</div>
   if (error) return <div className="text-red-500">Error: {error}</div>
 
   if (isFirstSignIn) {
@@ -464,7 +400,9 @@ export default function ProfileView() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {renderProfileCard(profile)}
+            {profile ? renderProfileCard(profile) : (
+              <div className="text-gray-500">Loading profile...</div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -504,9 +442,8 @@ export default function ProfileView() {
                 />
               </div>
             </div>
-
             {showCreateForm && (
-              <form onSubmit={handleCreateProfile} className="space-y-4 mb-6">
+              <form onSubmit={handleCreateProfile} className="mb-6 space-y-4">
                 <div>
                   <Label>Email</Label>
                   <Input
@@ -514,7 +451,6 @@ export default function ProfileView() {
                     value={createForm.email}
                     onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
                     required
-                    className="mt-1"
                   />
                 </div>
                 <div>
@@ -523,7 +459,6 @@ export default function ProfileView() {
                     value={createForm.username}
                     onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })}
                     required
-                    className="mt-1"
                   />
                 </div>
                 <div>
@@ -532,7 +467,6 @@ export default function ProfileView() {
                     value={createForm.name}
                     onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
                     required
-                    className="mt-1"
                   />
                 </div>
                 <div>
@@ -542,7 +476,6 @@ export default function ProfileView() {
                     value={createForm.password}
                     onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
                     required
-                    className="mt-1"
                   />
                 </div>
                 {createError && (
@@ -556,7 +489,7 @@ export default function ProfileView() {
             )}
             <div className="space-y-4">
               {allProfiles
-                .filter(p => p.id !== profile.id)
+                .filter(p => p?.id && p.id !== profile?.id)
                 .map(renderProfileCard)}
             </div>
 
@@ -591,4 +524,17 @@ export default function ProfileView() {
       )}
     </div>
   )
+}
+
+ProfileView.propTypes = {
+  profile: PropTypes.shape({
+    id: PropTypes.string,
+    auth_id: PropTypes.string,
+    username: PropTypes.string,
+    name: PropTypes.string,
+    email: PropTypes.string,
+    role: PropTypes.string,
+    created_at: PropTypes.string,
+    preferences: PropTypes.object
+  }).isRequired
 } 

@@ -18,8 +18,11 @@ export default function AuthComponent() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event) => {
+      console.log('Auth state changed:', event);
       if (event === 'SIGNED_IN') {
+        // Clear any stale data first
+        localStorage.removeItem('supabase.auth.token');
         navigate('/')
       }
     })
@@ -46,6 +49,11 @@ export default function AuthComponent() {
     setError(null)
     setLoading(true)
     try {
+      // Clear any existing state first
+      localStorage.clear(); // Clear all localStorage
+      await supabase.auth.signOut(); // Force clear any existing session
+      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay to ensure cleanup
+
       const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) {
         setError(getErrorMessage(error))
@@ -76,16 +84,31 @@ export default function AuthComponent() {
       if (error) {
         setError(getErrorMessage(error))
       } else {
-        // Update the profile with username and name
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .update({ username, name })
-          .eq('auth_id', data.user.id)
+        // Wait for profile to be created
+        let retries = 0;
+        const maxRetries = 5;
+        let profile = null;
 
-        if (profileError) {
-          setError(getErrorMessage(profileError))
+        while (retries < maxRetries && !profile) {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('auth_id', data.user.id)
+            .single();
+
+          if (profileData) {
+            profile = profileData;
+            break;
+          }
+
+          retries++;
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between retries
+        }
+
+        if (profile) {
+          setError('Profile created successfully! You can now sign in.')
         } else {
-          setError('Check your email for the confirmation link.')
+          setError('Profile creation in progress. Please try signing in after a few seconds.')
         }
       }
     } catch (error) {

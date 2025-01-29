@@ -6,7 +6,6 @@ import { getActiveWorkflows } from '../../lib/ticketService';
 
 export default function WorkflowList({ onCreateWorkflow, onEditWorkflow, onViewWorkflow }) {
   const [workflows, setWorkflows] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -21,8 +20,6 @@ export default function WorkflowList({ onCreateWorkflow, onEditWorkflow, onViewW
     } catch (err) {
       setError('Error loading workflows');
       console.error('Error:', err);
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -43,7 +40,6 @@ export default function WorkflowList({ onCreateWorkflow, onEditWorkflow, onViewW
     }
   }
 
-  if (loading) return <div>Loading workflows...</div>;
   if (error) return <div className="text-red-500">{error}</div>;
 
   return (

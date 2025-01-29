@@ -24,9 +24,9 @@ export default function Workspace({
   onViewTicket,
   profile 
 }) {
-  const renderComponent = () => {
-    return (
-      <Suspense fallback={<div>Loading...</div>}>
+  return (
+    <div className="p-6 overflow-auto h-[calc(100vh-60px)] min-h-0 relative z-10">
+      <Suspense fallback={<div></div>}>
         {activeComponent === 'workflows' && (
           <>
             {workflowState.view === 'list' && (
@@ -78,30 +78,12 @@ export default function Workspace({
           )
         )}
         {activeComponent === 'knowledge' && <Knowledge profile={profile} />}
-        {activeComponent === 'profile' && <Profile />}
+        {activeComponent === 'profile' && <Profile profile={profile} />}
         {activeComponent === 'notifications' && (
           <NotificationCenter onViewTicket={onViewTicket} />
         )}
       </Suspense>
-    )
-  }
-
-  return (
-    <main style={{
-      marginLeft: '200px',  // Width of sidebar
-      marginTop: '60px',    // Height of topbar
-      padding: '20px',
-      paddingBottom: '200px',  // Extra space at bottom
-      minHeight: 'calc(100vh - 60px)',
-      overflowY: 'auto',
-      height: 'calc(100vh - 60px)',  // Fixed height to enable scroll
-      position: 'fixed',
-      right: 0,
-      left: '200px',  // Same as marginLeft
-      top: '60px'     // Same as marginTop
-    }}>
-      {renderComponent()}
-    </main>
+    </div>
   )
 }
 

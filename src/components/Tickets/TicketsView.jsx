@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Plus, ArrowRight, Workflow } from 'lucide-react';
+import { Plus, ArrowRight, Workflow, Sparkles } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
-import AssignWorkflowModal from './AssignWorkflowModal';
-import AssignedUserDisplay from './AssignedUserDisplay';
+import { AssignWorkflowModal } from './AssignWorkflowModal';
+import { AssignedUserDisplay } from './AssignedUserDisplay';
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
-import TicketDetail from './TicketDetail';
+import { TicketDetail } from './TicketDetail';
+import { MyTickets } from './MyTickets';
+import { MessagePreviewDialog } from './MessagePreviewDialog';
+import { TicketView } from './TicketView';
 
 export default function TicketsView({ profile }) {
   const navigate = useNavigate();
-  console.log('Current profile:', profile);
-  console.log('User role:', profile?.role);
   
   const [unassignedTickets, setUnassignedTickets] = useState([]);
   const [workflows, setWorkflows] = useState([]);
@@ -21,13 +22,16 @@ export default function TicketsView({ profile }) {
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [showWorkflowModal, setShowWorkflowModal] = useState(false);
   const [selectedTicketId, setSelectedTicketId] = useState(null);
+  const [showMessageDialog, setShowMessageDialog] = useState(false);
 
   useEffect(() => {
     loadData();
   }, [profile?.org_id]);
 
   async function loadData() {
-    if (!profile?.org_id) return;
+    if (!profile?.org_id) {
+      return;
+    }
     
     try {
       setLoading(true);
@@ -124,6 +128,18 @@ export default function TicketsView({ profile }) {
               <Workflow size={20} />
             </button>
           )}
+          {/* AI Message Generation Button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedTicket(ticket);
+              setShowMessageDialog(true);
+            }}
+            className="p-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+            title="Generate AI response"
+          >
+            <Sparkles size={20} />
+          </button>
           <button
             onClick={() => setSelectedTicketId(ticket.id)}
             className="p-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
@@ -188,27 +204,31 @@ export default function TicketsView({ profile }) {
       )}
 
       {/* Workflow Sections */}
-      {
-      (profile.role === 'admin' || profile.role === 'agent') &&
+      {(profile.role === 'admin' || profile.role === 'agent') &&
         workflows.map(workflow => (
-        <div key={workflow.id} className="mb-8 border border-gray-200 rounded-lg p-6 bg-white shadow-sm">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold">{workflow.name}</h2>
-            <button
-              onClick={() => navigate(`/workflows/${workflow.id}/kanban`)}
-              className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all flex items-center gap-2"
-            >
-              <ArrowRight size={20} />
-              View Kanban
-            </button>
+          <div key={workflow.id} className="mb-8 border border-gray-200 rounded-lg p-6 bg-white shadow-sm">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold">{workflow.name}</h2>
+              <button
+                onClick={() => navigate(`/workflows/${workflow.id}/kanban`)}
+                className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all flex items-center gap-2"
+              >
+                <ArrowRight size={20} />
+                View Kanban
+              </button>
+            </div>
+            <div className="grid gap-4">
+              {workflowTickets[workflow.id]?.length === 0 ? (
+                <p className="text-gray-500 italic">No tickets in this workflow</p>
+              ) : renderTicketList(workflowTickets[workflow.id] || [], false)}
+            </div>
           </div>
-          <div className="grid gap-4">
-            {workflowTickets[workflow.id]?.length === 0 ? (
-              <p className="text-gray-500 italic">No tickets in this workflow</p>
-            ) : renderTicketList(workflowTickets[workflow.id] || [], false)}
-          </div>
-        </div>
-      ))}
+        ))}
+
+      {/* My Tickets Section - Show for all users */}
+      <div className="mb-8 border border-gray-200 rounded-lg p-6 bg-white shadow-sm">
+        <MyTickets onSelectTicket={setSelectedTicketId} />
+      </div>
 
       {showWorkflowModal && selectedTicket && (
         <AssignWorkflowModal
@@ -223,6 +243,40 @@ export default function TicketsView({ profile }) {
             setSelectedTicket(null);
             loadData();
           }}
+        />
+      )}
+
+      {/* Message Preview Dialog */}
+      {showMessageDialog && selectedTicket && (
+        <MessagePreviewDialog
+          isOpen={showMessageDialog}
+          onClose={() => {
+            setShowMessageDialog(false);
+            setSelectedTicket(null);
+          }}
+          onConfirm={async (message) => {
+            try {
+              const { error } = await supabase.rpc('update_ticket_data', {
+                p_ticket_id: selectedTicket.id,
+                p_description: message,
+                p_change_reason: 'AI response added'
+              });
+              if (error) throw error;
+              await loadData(); // Refresh the list
+            } catch (err) {
+              console.error('Error adding AI message:', err);
+            }
+            setShowMessageDialog(false);
+            setSelectedTicket(null);
+          }}
+          ticketContext={{
+            title: selectedTicket.title,
+            description: selectedTicket.description,
+            knowledgeKeywords: [], // We'll add this later
+            customerInfo: {} // We'll add this later
+          }}
+          generatedMessage=""
+          isLoading={false}
         />
       )}
     </div>
