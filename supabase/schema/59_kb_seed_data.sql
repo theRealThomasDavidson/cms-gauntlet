@@ -1,3 +1,12 @@
+-- Create junction table for stage-article relationships if it doesn't exist
+CREATE TABLE IF NOT EXISTS workflow_stage_articles (
+  id uuid primary key default uuid_generate_v4(),
+  stage_id uuid references workflow_stages(id) on delete cascade,
+  article_id uuid references kb_articles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique(stage_id, article_id)
+);
+
 -- Seed data for knowledge base articles
 insert into kb_articles (
   org_id,
@@ -233,4 +242,489 @@ update kb_articles
 set 
   is_public = true,
   status = 'published'
-where title in ('Canoe Pricing Guide', 'Canoe Specifications'); 
+where title in ('Canoe Pricing Guide', 'Canoe Specifications');
+
+-- 1. WORKFLOW CREATION
+-- Add unique constraint to workflows table if it doesn't exist
+DO $$ 
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conname = 'workflows_name_key'
+  ) THEN
+    ALTER TABLE workflows ADD CONSTRAINT workflows_name_key UNIQUE (name);
+  END IF;
+END $$;
+
+-- Create base workflows
+WITH default_org AS (
+  SELECT org_id as default_org_id, id as user_id 
+  FROM profiles 
+  WHERE auth_id = auth.uid() 
+  LIMIT 1
+)
+INSERT INTO workflows (name, description, created_by, org_id) 
+SELECT DISTINCT ON (v.name)
+  v.name,
+  COALESCE(w.description, v.description) as description,
+  COALESCE(w.created_by, default_org.user_id) as created_by,
+  COALESCE(w.org_id, default_org.default_org_id) as org_id
+FROM (
+  VALUES 
+    ('Sales', 'Workflow for handling canoe sales inquiries and orders'),
+    ('Canoe Repair', 'Workflow for handling repair or replacement requests for damaged canoes'),
+    ('Canoe Activities', 'Workflow for helping customers learn about different canoe activities and uses')
+) as v(name, description)
+CROSS JOIN default_org
+LEFT JOIN workflows w ON w.name = v.name
+WHERE NOT EXISTS (
+  SELECT 1 FROM workflows w2 
+  WHERE w2.name = v.name
+);
+
+-- Then insert repair workflow stages
+WITH repair_workflow AS (
+  SELECT id FROM workflows WHERE name = 'Canoe Repair'
+)
+INSERT INTO workflow_stages (workflow_id, name, description, is_start, is_end, is_other) 
+SELECT 
+  (SELECT id FROM repair_workflow),
+  name,
+  description,
+  is_start,
+  is_end,
+  false as is_other
+FROM (VALUES
+  ('New Ticket', 'Initial repair request...', true, false),
+  ('Triage Damage', 'Evaluate damage severity...', false, false)
+  -- ... other stages
+) AS v(name, description, is_start, is_end)
+WHERE EXISTS (SELECT 1 FROM repair_workflow)  -- Only insert if workflow exists
+AND NOT EXISTS (
+  SELECT 1 FROM workflow_stages ws 
+  WHERE ws.workflow_id = (SELECT id FROM repair_workflow)
+  AND (ws.name = v.name OR (ws.is_start = true AND v.is_start = true))
+);
+
+-- Set up stage connections for Sales workflow
+WITH sales_stages AS (
+  SELECT id, name, 
+    lead(id) OVER (ORDER BY CASE 
+      WHEN name = 'New Ticket' THEN 1
+      WHEN name = 'get estimate' THEN 2
+      WHEN name = 'get delivery information' THEN 3
+      WHEN name = 'put in work order for Canoe' THEN 4
+      WHEN name = 'Complete' THEN 5
+    END) as next_id
+  FROM workflow_stages
+  WHERE workflow_id = (SELECT id FROM workflows WHERE name = 'Sales')
+)
+UPDATE workflow_stages ws1
+SET next_stage_id = ss.next_id
+FROM sales_stages ss
+WHERE ws1.id = ss.id;
+
+-- Update stage connections for Sales workflow
+WITH sales_stages AS (
+  SELECT ws.id, ws.name 
+  FROM workflow_stages ws
+  JOIN workflows w ON w.id = ws.workflow_id
+  WHERE w.name = 'Sales'
+),
+articles AS (
+  SELECT ka.id, ka.title 
+  FROM kb_articles ka
+)
+INSERT INTO workflow_stage_articles (stage_id, article_id)
+SELECT ss.id, a.id
+FROM sales_stages ss
+CROSS JOIN articles a
+WHERE 
+  ((ss.name = 'get estimate' AND a.title IN ('Canoe Pricing Guide', 'Canoe Specifications'))
+  OR (ss.name = 'put in work order for Canoe' AND a.title = 'Canoe Specifications'))
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_stage_articles wsa 
+    WHERE wsa.stage_id = ss.id 
+    AND wsa.article_id = a.id
+  );
+
+-- Link articles to specific stages
+WITH repair_stages AS (
+  SELECT ws.id, ws.name 
+  FROM workflow_stages ws
+  JOIN workflows w ON w.id = ws.workflow_id
+  WHERE w.name = 'Canoe Repair'
+),
+articles AS (
+  SELECT ka.id, ka.title 
+  FROM kb_articles ka
+)
+INSERT INTO workflow_stage_articles (stage_id, article_id)
+SELECT rs.id, a.id
+FROM repair_stages rs
+CROSS JOIN articles a
+WHERE 
+  (rs.name = 'Triage Damage' AND a.title = 'Canoe Repair Guide')
+  OR (rs.name = 'Software Patch' AND a.title = 'Canoe Repair Guide')
+  OR (rs.name = 'Process Replacement' AND a.title = 'Canoe Specifications');
+
+-- Add privacy guide article
+INSERT INTO kb_articles (
+  org_id,
+  title,
+  content,
+  status,
+  is_public,
+  created_by,
+  updated_by
+) VALUES (
+  (select org_id from profiles limit 1),
+  'Delivery Information Guidelines',
+  $md$# Delivery Information Guidelines
+
+## When Customers Ask About Personal Information
+
+When customers inquire about providing delivery details:
+
+1. Reassure them about our privacy commitment:
+   - Information used only for delivery purposes
+   - Data deleted after order completion (upon request)
+   - Never shared with third parties
+   - Secure storage with limited access
+
+2. Explain necessity for delivery:
+   - Required for successful delivery
+   - Helps prevent delivery issues
+   - Enables delivery status updates
+   - Allows direct communication if needed
+
+3. Customer controls:
+   - Can request data deletion after delivery
+   - Can opt out of future communications
+   - Access to their stored information
+   - Can update details anytime
+
+Note: Only discuss privacy policies if customers express concerns. Focus first on completing the order and moving the workflow forward.$md$,
+  'published',
+  true,
+  (select id from profiles limit 1),
+  (select id from profiles limit 1)
+);
+
+-- Link article to delivery information stage
+WITH delivery_stage AS (
+  SELECT ws.id 
+  FROM workflow_stages ws
+  JOIN workflows w ON w.id = ws.workflow_id
+  WHERE w.name = 'Sales' AND ws.name = 'get delivery information'
+),
+privacy_article AS (
+  SELECT id FROM kb_articles WHERE title = 'Delivery Information Guidelines'
+)
+INSERT INTO workflow_stage_articles (stage_id, article_id)
+SELECT delivery_stage.id, privacy_article.id
+FROM delivery_stage, privacy_article;
+
+-- Add On-Site Repair Guide
+WITH default_user AS (
+  SELECT id as user_id, org_id
+  FROM profiles 
+  WHERE auth_id = auth.uid()
+  LIMIT 1
+)
+INSERT INTO kb_articles (
+  org_id, title, content, status, is_public, created_by, updated_by
+) 
+SELECT
+  org_id,
+  'On-Site Repair Guide',
+  $md$# On-Site Repair Process Guide
+
+## Preparation
+- Schedule 3-4 hour window
+- Clear workspace around canoe
+- Power source needed
+- Good lighting required
+
+## Common Repairs
+- Hull cracks
+- Gunwale damage
+- Seat repairs
+- Keel repairs
+
+## Customer Preparation
+- Remove personal items
+- Clear access path
+- Secure pets
+- Weather considerations
+
+## What to Expect
+- Initial inspection
+- Repair process explanation
+- Testing and validation
+- Final inspection with customer$md$,
+  'published',
+  true,
+  user_id,
+  user_id
+FROM default_user;
+
+-- Link privacy article to repair workflow's contact stage
+WITH contact_stage AS (
+  SELECT ws.id 
+  FROM workflow_stages ws
+  JOIN workflows w ON w.id = ws.workflow_id
+  WHERE w.name = 'Canoe Repair' AND ws.name = 'Gather Contact Info'
+),
+privacy_article AS (
+  SELECT id FROM kb_articles WHERE title = 'Delivery Information Guidelines'
+)
+INSERT INTO workflow_stage_articles (stage_id, article_id)
+SELECT contact_stage.id, privacy_article.id
+FROM contact_stage, privacy_article;
+
+-- Link on-site repair guide
+WITH repair_stage AS (
+  SELECT ws.id 
+  FROM workflow_stages ws
+  JOIN workflows w ON w.id = ws.workflow_id
+  WHERE w.name = 'Canoe Repair' AND ws.name = 'On-Site Repair'
+),
+repair_article AS (
+  SELECT id FROM kb_articles WHERE title = 'On-Site Repair Guide'
+)
+INSERT INTO workflow_stage_articles (stage_id, article_id)
+SELECT repair_stage.id, repair_article.id
+FROM repair_stage, repair_article;
+
+-- Insert Activity Information workflow stages
+WITH info_workflow AS (
+  SELECT id FROM workflows WHERE name = 'Canoe Activities' LIMIT 1
+)
+INSERT INTO workflow_stages (workflow_id, name, description, is_start, is_end, is_other) 
+SELECT 
+  (SELECT id FROM info_workflow),
+  name,
+  description,
+  is_start,
+  is_end,
+  false as is_other
+FROM (VALUES
+  (
+    'Initial Interest',
+    'Understand customer''s primary interest:
+    1. Fishing & Angling
+    2. Camping & Expeditions
+    3. Adventure & Tourism
+    4. General Recreation
+    Ask about their experience level with canoes',
+    true,
+    false
+  ),
+  (
+    'Fishing Setup',
+    'Guide for fishing enthusiasts:
+    - Discuss stability requirements
+    - Explain storage options
+    - Cover fishing-specific accessories:
+      * Live wells
+      * Rod holders
+      * Anchor systems
+    - Share fishing technique tips',
+    false,
+    false
+  ),
+  (
+    'Camping Guide',
+    'Information for expedition planning:
+    - Cargo capacity needs
+    - Gear storage solutions
+    - Weather protection options
+    - Multi-day trip considerations
+    - Portage requirements',
+    false,
+    false
+  ),
+  (
+    'Adventure Planning',
+    'Exotic locations and guided trips:
+    - Popular destinations
+    - Tour packages
+    - Local regulations
+    - Skill requirements
+    - Safety considerations',
+    false,
+    false
+  ),
+  (
+    'Equipment Selection',
+    'Help match needs to equipment:
+    1. Canoe size and material
+    2. Required accessories
+    3. Safety equipment
+    4. Storage solutions',
+    false,
+    false
+  ),
+  (
+    'Schedule Demo',
+    'Arrange product demonstration:
+    1. Set demo date/time
+    2. Choose location
+    3. Prepare equipment
+    4. Safety briefing scheduling',
+    false,
+    true
+  )
+) AS v(name, description, is_start, is_end)
+WHERE EXISTS (SELECT 1 FROM info_workflow)  -- Only insert if workflow exists
+AND NOT EXISTS (
+  SELECT 1 FROM workflow_stages ws 
+  WHERE ws.workflow_id = (SELECT id FROM info_workflow)
+  AND (ws.name = v.name OR (ws.is_start = true AND v.is_start = true))
+);
+
+-- Add knowledge base articles for activities
+WITH default_user AS (
+  SELECT id as user_id, org_id
+  FROM profiles 
+  WHERE auth_id = auth.uid()
+  LIMIT 1
+)
+INSERT INTO kb_articles (
+  org_id, title, content, status, is_public, created_by, updated_by
+) 
+SELECT
+  org_id,
+  'Canoe Fishing Guide',
+  $md$# Canoe Fishing Guide...$md$,
+  'published',
+  true,
+  user_id,
+  user_id
+FROM default_user
+WHERE NOT EXISTS (
+  SELECT 1 FROM kb_articles ka 
+  WHERE ka.title = 'Canoe Fishing Guide'
+);
+
+-- Separate CTE for each insert
+WITH default_user AS (
+  SELECT id as user_id, org_id
+  FROM profiles 
+  WHERE auth_id = auth.uid()
+  LIMIT 1
+)
+INSERT INTO kb_articles (
+  org_id, title, content, status, is_public, created_by, updated_by
+) 
+SELECT
+  org_id,
+  'Canoe Camping Guide',
+  $md$# Canoe Camping Guide...$md$,
+  'published',
+  true,
+  user_id,
+  user_id
+FROM default_user
+WHERE NOT EXISTS (
+  SELECT 1 FROM kb_articles ka 
+  WHERE ka.title = 'Canoe Camping Guide'
+);
+
+-- Add Adventure Canoeing Guide with CTE
+WITH default_user AS (
+  SELECT id as user_id, org_id
+  FROM profiles 
+  WHERE auth_id = auth.uid()
+  LIMIT 1
+)
+INSERT INTO kb_articles (
+  org_id, title, content, status, is_public, created_by, updated_by
+) 
+SELECT
+  org_id,
+  'Adventure Canoeing Guide',
+  $md$# Adventure Canoeing Guide
+
+## Types of Adventures
+1. Whitewater Exploration
+   - Rapid classifications
+   - Safety equipment
+   - Technique basics
+
+2. Wilderness Tours
+   - Guided options
+   - Self-guided planning
+   - Group expeditions
+
+3. Nature Photography
+   - Best locations
+   - Stable platforms
+   - Equipment protection
+
+## Popular Destinations
+- National Parks
+- Remote Lakes
+- River Systems
+- Coastal Waters
+
+## Safety Considerations
+- Skill requirements
+- Weather awareness
+- Communication devices
+- Emergency protocols$md$,
+  'published',
+  true,
+  user_id,
+  user_id
+FROM default_user
+WHERE NOT EXISTS (
+  SELECT 1 FROM kb_articles ka 
+  WHERE ka.title = 'Adventure Canoeing Guide'
+);
+
+-- Update stage connections for Activities workflow
+WITH activity_stages AS (
+  SELECT id, name, 
+    lead(id) OVER (ORDER BY CASE 
+      WHEN name = 'Initial Interest' THEN 1
+      WHEN name = 'Fishing Setup' THEN 2
+      WHEN name = 'Camping Guide' THEN 3
+      WHEN name = 'Adventure Planning' THEN 4
+      WHEN name = 'Equipment Selection' THEN 5
+      WHEN name = 'Schedule Demo' THEN 6
+    END) as next_id
+  FROM workflow_stages
+  WHERE workflow_id = (SELECT id FROM workflows WHERE name = 'Canoe Activities')
+)
+UPDATE workflow_stages ws1
+SET next_stage_id = as1.next_id
+FROM activity_stages as1
+WHERE ws1.id = as1.id;
+
+-- Link knowledge base articles to stages
+WITH activity_stages AS (
+  SELECT ws.id, ws.name 
+  FROM workflow_stages ws
+  JOIN workflows w ON w.id = ws.workflow_id
+  WHERE w.name = 'Canoe Activities'
+),
+articles AS (
+  SELECT ka.id, ka.title 
+  FROM kb_articles ka
+)
+INSERT INTO workflow_stage_articles (stage_id, article_id)
+SELECT ws.id, a.id
+FROM activity_stages ws
+CROSS JOIN articles a
+WHERE 
+  ((ws.name = 'Fishing Setup' AND a.title = 'Canoe Fishing Guide')
+  OR (ws.name = 'Camping Guide' AND a.title = 'Canoe Camping Guide')
+  OR (ws.name = 'Adventure Planning' AND a.title = 'Adventure Canoeing Guide')
+  OR (ws.name = 'Equipment Selection' AND a.title IN ('Canoe Specifications', 'Canoe Pricing Guide')))
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_stage_articles wsa 
+    WHERE wsa.stage_id = ws.id 
+    AND wsa.article_id = a.id
+  ); 
