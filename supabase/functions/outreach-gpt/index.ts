@@ -13,6 +13,15 @@ serve(async (req) => {
   try {
     const { context } = await req.json()
     
+    // Debug log the incoming context
+    console.log('Received context:', JSON.stringify({
+      customerName: context.customerName,
+      ticketTitle: context.ticketTitle,
+      currentStage: context.workflow.currentStage,
+      historyCount: context.ticketHistory?.length,
+      knowledgeBaseCount: context.knowledgeBase?.length
+    }, null, 2))
+
     // Initialize LangChain chat model
     const chat = new ChatOpenAI({
       temperature: 0.7,
@@ -36,7 +45,7 @@ serve(async (req) => {
       Ticket History:
       {ticketHistory}
       
-      Available Workflow Stages:
+      Available Stage Transitions:
       {workflow.allStages}
 
       Relevant Knowledge Base Articles:
@@ -64,6 +73,28 @@ serve(async (req) => {
       .map(stage => `- ${stage.name}: ${stage.description}`)
       .join('\n')
 
+    // Filter function to get relevant history entries
+    const filterRelevantHistory = (h: any) => {
+      // Keep initial ticket creation
+      if (h.changes.action === 'created') return true;
+      // Keep customer messages (non-AI responses)
+      if (h.changes.change_reason && 
+          !h.changes.change_reason.includes('AI response') &&
+          !h.changes.change_reason.includes('Stage changed') &&
+          !h.changes.change_reason.includes('Stage updated')) return true;
+      return false;
+    };
+
+    // Format the history for debugging
+    const formattedHistory = context.ticketHistory
+      .filter(filterRelevantHistory)
+      .map(h => ({
+        timestamp: new Date(h.changed_at).toLocaleString(),
+        action: h.changes.action || 'update',
+        description: h.description,
+        reason: h.changes.change_reason
+      }));
+
     // Format the system prompt
     const systemPrompt = await systemPromptTemplate.format({
       ...context,
@@ -72,7 +103,8 @@ serve(async (req) => {
       'workflow.currentStage.description': context.workflow.currentStage.description,
       'workflow.allStages': formattedStages,
       'ticketHistory': context.ticketHistory
-        .map(h => `- ${new Date(h.timestamp).toLocaleString()}: ${h.action}${h.description ? ` - ${h.description}` : ''}${h.change ? ` (${h.change})` : ''}`)
+        .filter(filterRelevantHistory)
+        .map(h => `- ${new Date(h.changed_at).toLocaleString()}: ${h.changes.action || 'update'}${h.description ? ` - ${h.description}` : ''}${h.changes.change_reason ? ` (${h.changes.change_reason})` : ''}`)
         .join('\n'),
       'knowledgeBase': context.knowledgeBase
         .map(article => `
@@ -81,14 +113,24 @@ serve(async (req) => {
         `).join('\n\n')
     })
 
-    // Use LangChain's messaging system
+    // Debug log the formatted prompt
+    console.log('Formatted prompt:', systemPrompt)
+
+    // Return the AI response instead of just the prompt
     const response = await chat.call([
       new SystemMessage(systemPrompt),
       new HumanMessage("Generate a helpful response for this ticket that addresses their needs and provides next steps.")
     ])
 
     return new Response(
-      JSON.stringify({ response }),
+      JSON.stringify({ 
+        response,
+        debug: {
+          historyCount: context.ticketHistory?.length,
+          currentStage: context.workflow.currentStage,
+          formattedHistory
+        }
+      }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200,
