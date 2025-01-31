@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Loader2, Sparkles, Plus, MessageSquare } from "lucide-react"
+import { Loader2, Plus } from "lucide-react"
 import { supabase } from '../../lib/supabaseClient'
 import { MessagePreviewDialog } from './MessagePreviewDialog.jsx'
 import CustomerMessageDialog from './CustomerMessageDialog'

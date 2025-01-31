@@ -129,17 +129,7 @@ export default function TicketsView({ profile }) {
             </button>
           )}
           {/* AI Message Generation Button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedTicket(ticket);
-              setShowMessageDialog(true);
-            }}
-            className="p-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-            title="Generate AI response"
-          >
-            <Sparkles size={20} />
-          </button>
+        
           <button
             onClick={() => setSelectedTicketId(ticket.id)}
             className="p-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"

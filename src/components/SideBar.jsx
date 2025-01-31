@@ -37,17 +37,7 @@ export default function SideBar({ setActiveComponent, onWorkflowAction }) {
   }
 
   const testOutreachGPT = async () => {
-    try {
-      const { data, error } = await supabase.functions.invoke('outreach-gpt')
-      
-      if (error) throw error
-      
-      console.log('OutreachGPT Test Response:', data)
-      alert(JSON.stringify(data, null, 2))
-    } catch (error) {
-      console.error('Error testing OutreachGPT:', error)
-      alert('Error testing OutreachGPT. Check console for details.')
-    }
+    // ... remove this entire function
   }
 
   useEffect(() => {
@@ -150,15 +140,6 @@ export default function SideBar({ setActiveComponent, onWorkflowAction }) {
       zIndex: 10
     }}>
       <nav className="space-y-2 p-4">
-        {/* Test Edge Function - For all users */}
-        <Button 
-          onClick={testOutreachGPT}
-          className="w-full justify-start bg-purple-600 hover:bg-purple-700 text-white"
-        >
-          <Terminal className="h-4 w-4 mr-2" />
-          Test OutreachGPT
-        </Button>
-
         {/* Notifications - For all users */}
         <div className="relative inline-block w-full">
           <Button 
@@ -198,14 +179,14 @@ export default function SideBar({ setActiveComponent, onWorkflowAction }) {
           Tickets
         </Button>
 
-        {/* Knowledge Base - For all users */}
+        {/* Knowledge Base - For all users
         <Button 
           onClick={() => setActiveComponent('knowledge')}
           className="w-full justify-start"
         >
           <BookOpen className="h-4 w-4 mr-2" />
           Knowledge Base
-        </Button>
+        </Button> */}
 
         {/* Profile - For all users */}
         <Button 
