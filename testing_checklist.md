@@ -1,4 +1,42 @@
-# Canoe CRM AI Testing Checklist
+# Testing Checklist
+
+## Core Functionality
+- [ ] Ticket Creation
+- [ ] Workflow Stage Transitions
+- [ ] AI Response Generation
+- [ ] Knowledge Base Integration
+
+## User Interface
+- [ ] Kanban Board Loading
+- [ ] Ticket View Rendering
+- [ ] Response Display
+- [ ] Stage Updates
+
+## Edge Cases
+- [ ] Error Handling
+- [ ] Empty Knowledge Base
+- [ ] Invalid Stage Transitions
+- [ ] Network Issues
+
+## Performance
+- [ ] Response Time
+- [ ] Large Ticket History
+- [ ] Multiple Concurrent Requests
+
+## LangSmith Integration
+- [ ] Response Quality Tracking
+- [ ] Stage Transition Accuracy
+- [ ] Error Rate Monitoring
+- [ ] Performance Metrics
+
+## Test Data
+- [ ] Sample Tickets
+  - [ ] Simple repair request
+  - [ ] Complex repair with history
+  - [ ] Quote request
+- [ ] Knowledge Base Articles
+  - [ ] Repair guide with pricing
+  - [ ] Process documentation
 
 ## Metrics Implementation
 - [ ] Success Rate at Identifying Correct Action
